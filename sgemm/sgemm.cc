@@ -80,7 +80,7 @@ void sgemm_cr(
 #define HIP_CALL(call) do{  \
     hipError_t err = call;  \
     if(err != hipSuccess){  \
-        printf("[hiperror](%d) fail to call %s",(int)err,#call);    \
+        printf("[hiperror %s, %d](%d) fail to call %s", __FILE__, __LINE__, (int)err,#call);    \
         exit(0);            \
     }                       \
 } while(0)
