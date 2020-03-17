@@ -9,30 +9,67 @@
 #include <malloc.h>
 #include <hip/hip_runtime.h>
 
+#define __USE_LDS__ 1
+#define __MAX_VEC_LEN__ 32
+
 #define VEC_LEN (1024 * 1024 * 16)
 
 #define WARM_UPS 5
 
 #define MEM_ALIGN_128 128
 
-#define THREADS_PER_BLOCK 1024
+#define THREADS_PER_BLOCK 64
 
 // Device (Kernel) function, it must be void
 __global__ void vector_add(float* out, float* in_0, float* in_1, const int vec_length) {
+    assert(vec_length < 16);
     int index = hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
+    int i = 0;
 
-    __shared__ float in_0_sm[1];
-    __shared__ float in_1_sm[1];
-    __shared__ float out_sm[1];
+#if __USE_LDS__
+    __shared__ float in_0_sm[256 * __MAX_VEC_LEN__];
+    __shared__ float in_1_sm[256 * __MAX_VEC_LEN__];
+    __shared__ float out_sm[256 * __MAX_VEC_LEN__];
 
-    in_0_sm[0] = in_0[index];
-    in_1_sm[0] = in_1[index];
-    __syncthreads();
+    for (i = 0; i < vec_length; i++)
+    {
+        in_0_sm[hipThreadIdx_x * vec_length + i] = in_0[index * vec_length + i];
+        in_1_sm[hipThreadIdx_x * vec_length + i] = in_1[index * vec_length + i];
+        out[index * vec_length + i] = in_0_sm[hipThreadIdx_x * vec_length + i] + in_1_sm[hipThreadIdx_x * vec_length + i];
+    }
+    //__syncthreads();
 
-    out_sm[0] = in_0_sm[0] + in_1_sm[0];
+    //out_sm[hipThreadIdx_x] = in_0_sm[hipThreadIdx_x] + in_1_sm[hipThreadIdx_x];
 
-    out[0] = out_sm[0];
+    //out[index] = out_sm[hipThreadIdx_x];
+    //for (i = 0; i < vec_length; i++)
+    //{
+    //    out[index * vec_length + i] = in_0_sm[hipThreadIdx_x * vec_length + i] + in_1_sm[hipThreadIdx_x * vec_length + i];
+    //}
+#else
+    out[index] = in_0[index] + in_1[index];
+#endif
 
+}
+
+void vector_add_cpu(float* out, float* in_0, float* in_1, const int vec_length)
+{
+    for(int i = 0; i < vec_length; i++)
+    {
+        out[i] = in_0[i] + in_1[i];
+    }
+}
+
+int vector_add_verification(float* out_cpu, float* out_gpu, const int vec_length)
+{
+    for(int i = 0; i < vec_length; i++)
+    {
+        if(out_cpu[i] != out_gpu[i])
+        {
+            return -i;
+        }
+    }
+    return 1;
 }
 
 int main(int argc, char** argv)
@@ -47,6 +84,8 @@ int main(int argc, char** argv)
     float* gpu_vector_out;
 
     float vecadd_ms = 0.f;
+
+    int len_per_thread = 2;
     
     hipEvent_t start, stop;
     hipEventCreate(&start);
@@ -67,16 +106,19 @@ int main(int argc, char** argv)
 
     cpu_vector_out = (float* )memalign(MEM_ALIGN_128, length_alloc * sizeof(float));
 
-    // allocate the memory on the device side
-    hipMalloc((void**)&gpu_vector_0, VEC_LEN * sizeof(float));
-    hipMalloc((void**)&gpu_vector_1, VEC_LEN * sizeof(float));
-    hipMalloc((void**)&gpu_vector_out, VEC_LEN * sizeof(float));
-
     // initialize the input data
     for (i = 0; i < VEC_LEN; i++) {
         vector_0[i] = (float)i * 10.0f;
         vector_1[i] = (float)i * 10.0f;
     }
+
+    // computation reference
+    vector_add_cpu(cpu_vector_out, vector_0, vector_1, VEC_LEN);
+
+    // allocate the memory on the device side
+    hipMalloc((void**)&gpu_vector_0, VEC_LEN * sizeof(float));
+    hipMalloc((void**)&gpu_vector_1, VEC_LEN * sizeof(float));
+    hipMalloc((void**)&gpu_vector_out, VEC_LEN * sizeof(float));
 
     // copy data to device
     hipMemcpy(gpu_vector_0, vector_0, VEC_LEN * sizeof(float), hipMemcpyHostToDevice);
@@ -85,17 +127,17 @@ int main(int argc, char** argv)
     // warm ups
     for (i = 0; i < WARM_UPS; i++)
     {
-        hipLaunchKernelGGL(vector_add, dim3(VEC_LEN / THREADS_PER_BLOCK, 1),
+        hipLaunchKernelGGL(vector_add, dim3(VEC_LEN / (THREADS_PER_BLOCK * len_per_thread), 1),
                     dim3(THREADS_PER_BLOCK, 1), 0, 0, gpu_vector_out,
-                    gpu_vector_0, gpu_vector_1, VEC_LEN);
+                    gpu_vector_0, gpu_vector_1, len_per_thread);
     }
 
     // run kernel code vec add
     hipEventRecord(start, NULL);
 
-    hipLaunchKernelGGL(vector_add, dim3(VEC_LEN / THREADS_PER_BLOCK, 1),
+    hipLaunchKernelGGL(vector_add, dim3(VEC_LEN / (THREADS_PER_BLOCK * len_per_thread), 1),
                     dim3(THREADS_PER_BLOCK, 1), 0, 0, gpu_vector_out,
-                    gpu_vector_0, gpu_vector_1, VEC_LEN);
+                    gpu_vector_0, gpu_vector_1, len_per_thread);
 
     hipEventRecord(stop, NULL);
     hipEventSynchronize(stop);
@@ -107,6 +149,17 @@ int main(int argc, char** argv)
     // copy gpu res to ddr
     hipMemcpy(vector_out, gpu_vector_out, VEC_LEN * sizeof(float), hipMemcpyDeviceToHost);
 
+    // verification
+    int wrong_num = vector_add_verification(cpu_vector_out, vector_out, VEC_LEN);
+    if (wrong_num != 1)
+    {
+        std::cout << "wrong result, wrong num is: " << wrong_num << std::endl;
+    }
+    else
+    {
+        std::cout << "right gpu code!" << std::endl;
+    }
+    
     printf("res=[%f, %f, %f, %f]\r\n", vector_out[0], vector_out[1], vector_out[2], vector_out[3]);
 
     // free the resources on device side
