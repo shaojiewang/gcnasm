@@ -41,6 +41,8 @@ __global__ void vector_add(float* out, float* in_0, float* in_1, const int vec_l
     __shared__ float in_1_sm[256 * __MAX_VEC_LEN__];
     //__shared__ float out_sm[256 * __MAX_VEC_LEN__];
 #endif
+
+#pragma unroll 8
     for (i = 0; i < vec_length; i++)
     {
         in_0_sm[hipThreadIdx_x * vec_length + i] = in_0[index * vec_length + i];
