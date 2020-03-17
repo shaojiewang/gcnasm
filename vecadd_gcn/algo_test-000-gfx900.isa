@@ -1,0 +1,68 @@
+
+algo_test-000-gfx900.hsaco:	file format ELF64-amdgpu
+
+
+Disassembly of section .text:
+
+0000000000001100 _Z10vector_addPfS_S_i:
+	s_load_dword s0, s[8:9], 0x18                              // 000000001100: C0020004 00000018
+	s_waitcnt lgkmcnt(0)                                       // 000000001108: BF8CC07F
+	s_cmp_lt_i32 s0, 16                                        // 00000000110C: BF049000
+	s_cbranch_scc0 BB0_5                                       // 000000001110: BF840038
+	s_cmp_lt_i32 s0, 1                                         // 000000001114: BF048100
+	s_cbranch_scc1 BB0_4                                       // 000000001118: BF850035
+	s_load_dwordx4 s[12:15], s[8:9], 0x10                      // 00000000111C: C00A0304 00000010
+	s_load_dword s1, s[4:5], 0x4                               // 000000001124: C0020042 00000004
+	s_load_dword s2, s[4:5], 0xc                               // 00000000112C: C0020082 0000000C
+	s_load_dwordx4 s[4:7], s[8:9], 0x0                         // 000000001134: C00A0104 00000000
+	v_mul_lo_u32 v2, v0, s0                                    // 00000000113C: D2850002 00000100
+	s_waitcnt lgkmcnt(0)                                       // 000000001144: BF8CC07F
+	v_mov_b32_e32 v4, s13                                      // 000000001148: 7E08020D
+	s_and_b32 s1, s1, 0xffff                                   // 00000000114C: 8601FF01 0000FFFF
+	s_mul_i32 s3, s10, s1                                      // 000000001154: 9203010A
+	s_sub_i32 s2, s2, s3                                       // 000000001158: 81820302
+	s_min_u32 s1, s2, s1                                       // 00000000115C: 83810102
+	s_mul_i32 s1, s1, s10                                      // 000000001160: 92010A01
+	v_add_u32_e32 v0, s1, v0                                   // 000000001164: 68000001
+	v_mul_lo_u32 v1, s0, v0                                    // 000000001168: D2850001 00020000
+	v_lshlrev_b32_e32 v0, 2, v2                                // 000000001170: 24000482
+	v_mov_b32_e32 v3, s7                                       // 000000001174: 7E060207
+	v_mov_b32_e32 v7, s5                                       // 000000001178: 7E0E0205
+	v_ashrrev_i32_e32 v2, 31, v1                               // 00000000117C: 2204029F
+	v_lshlrev_b64 v[5:6], 2, v[1:2]                            // 000000001180: D28F0005 00020282
+	v_add_co_u32_e32 v1, vcc, s6, v5                           // 000000001188: 32020A06
+	v_addc_co_u32_e32 v2, vcc, v3, v6, vcc                     // 00000000118C: 38040D03
+	v_add_co_u32_e32 v3, vcc, s12, v5                          // 000000001190: 32060A0C
+	v_addc_co_u32_e32 v4, vcc, v4, v6, vcc                     // 000000001194: 38080D04
+	v_add_co_u32_e32 v5, vcc, s4, v5                           // 000000001198: 320A0A04
+	v_addc_co_u32_e32 v6, vcc, v7, v6, vcc                     // 00000000119C: 380C0D07
+
+00000000000011a0 BB0_3:
+	global_load_dword v7, v[3:4], off                          // 0000000011A0: DC508000 077F0003
+	global_load_dword v8, v[1:2], off                          // 0000000011A8: DC508000 087F0001
+	v_add_co_u32_e32 v1, vcc, 4, v1                            // 0000000011B0: 32020284
+	v_addc_co_u32_e32 v2, vcc, 0, v2, vcc                      // 0000000011B4: 38040480
+	v_add_co_u32_e32 v3, vcc, 4, v3                            // 0000000011B8: 32060684
+	v_addc_co_u32_e32 v4, vcc, 0, v4, vcc                      // 0000000011BC: 38080880
+	s_add_i32 s0, s0, -1                                       // 0000000011C0: 8100C100
+	s_cmp_lg_u32 s0, 0                                         // 0000000011C4: BF078000
+	s_waitcnt vmcnt(0)                                         // 0000000011C8: BF8C0F70
+	v_add_f32_e32 v7, v7, v8                                   // 0000000011CC: 020E1107
+	global_store_dword v[5:6], v7, off                         // 0000000011D0: DC708000 007F0705
+	v_add_co_u32_e32 v5, vcc, 4, v5                            // 0000000011D8: 320A0A84
+	ds_write_b32 v0, v8                                        // 0000000011DC: D81A0000 00000800
+	v_add_u32_e32 v0, 4, v0                                    // 0000000011E4: 68000084
+	v_addc_co_u32_e32 v6, vcc, 0, v6, vcc                      // 0000000011E8: 380C0C80
+	s_cbranch_scc1 BB0_3                                       // 0000000011EC: BF85FFEC
+
+00000000000011f0 BB0_4:
+	s_endpgm                                                   // 0000000011F0: BF810000
+
+00000000000011f4 BB0_5:
+	s_mov_b64 s[0:1], s[6:7]                                   // 0000000011F4: BE800106
+	s_trap 2                                                   // 0000000011F8: BF920002
+
+00000000000011fc _Z5abortv:
+	s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)                    // 0000000011FC: BF8C0000
+	s_mov_b64 s[0:1], s[4:5]                                   // 000000001200: BE800104
+	s_trap 2                                                   // 000000001204: BF920002

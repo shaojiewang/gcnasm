@@ -11,6 +11,7 @@
 
 #define __USE_LDS__ 1
 #define __MAX_VEC_LEN__ 32
+#define USE_DYNAMIC_SHARED_MEM 0
 
 #define VEC_LEN (1024 * 1024 * 16)
 
@@ -27,10 +28,19 @@ __global__ void vector_add(float* out, float* in_0, float* in_1, const int vec_l
     int i = 0;
 
 #if __USE_LDS__
+
+#if USE_DYNAMIC_SHARED_MEM
+    HIP_DYNAMIC_SHARED(float, smem);
+    // HIP_DYNAMIC_SHARED(float, in_1_sm);
+    // HIP_DYNAMIC_SHARED(float, out_sm);
+    float* in_0_sm = smem;
+    float* in_1_sm = smem + 256 * vec_length;
+
+#else
     __shared__ float in_0_sm[256 * __MAX_VEC_LEN__];
     __shared__ float in_1_sm[256 * __MAX_VEC_LEN__];
-    __shared__ float out_sm[256 * __MAX_VEC_LEN__];
-
+    //__shared__ float out_sm[256 * __MAX_VEC_LEN__];
+#endif
     for (i = 0; i < vec_length; i++)
     {
         in_0_sm[hipThreadIdx_x * vec_length + i] = in_0[index * vec_length + i];
@@ -85,7 +95,15 @@ int main(int argc, char** argv)
 
     float vecadd_ms = 0.f;
 
-    int len_per_thread = 2;
+    int len_per_thread = 8;
+
+    // streams
+    hipStream_t vec_add_streams[2];
+    // create stream
+    for (int i = 0; i < 2; i++)
+    {
+        hipStreamCreate(&vec_add_streams[i]);
+    }
     
     hipEvent_t start, stop;
     hipEventCreate(&start);
@@ -128,7 +146,7 @@ int main(int argc, char** argv)
     for (i = 0; i < WARM_UPS; i++)
     {
         hipLaunchKernelGGL(vector_add, dim3(VEC_LEN / (THREADS_PER_BLOCK * len_per_thread), 1),
-                    dim3(THREADS_PER_BLOCK, 1), 0, 0, gpu_vector_out,
+                    dim3(THREADS_PER_BLOCK, 1), 0, vec_add_streams[0], gpu_vector_out,
                     gpu_vector_0, gpu_vector_1, len_per_thread);
     }
 
@@ -136,7 +154,7 @@ int main(int argc, char** argv)
     hipEventRecord(start, NULL);
 
     hipLaunchKernelGGL(vector_add, dim3(VEC_LEN / (THREADS_PER_BLOCK * len_per_thread), 1),
-                    dim3(THREADS_PER_BLOCK, 1), 0, 0, gpu_vector_out,
+                    dim3(THREADS_PER_BLOCK, 1), 0, vec_add_streams[0], gpu_vector_out,
                     gpu_vector_0, gpu_vector_1, len_per_thread);
 
     hipEventRecord(stop, NULL);
