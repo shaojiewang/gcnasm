@@ -12,6 +12,8 @@
 #define __USE_LDS__ 1
 #define __MAX_VEC_LEN__ 32
 #define USE_DYNAMIC_SHARED_MEM 0
+#define USE_INLINE_ASM 1
+#define LOOP_INLINE_ASM 1
 
 #define VEC_LEN (1024 * 1024 * 16)
 
@@ -42,13 +44,54 @@ __global__ void vector_add(float* out, float* in_0, float* in_1, const int vec_l
     //__shared__ float out_sm[256 * __MAX_VEC_LEN__];
 #endif
 
-#pragma unroll 8
+#if LOOP_INLINE_ASM // use asm for the whole loop
+    asm volatile("v_add_f32_e32 %0, %1, %2"
+                 :"=v" (out[index * vec_length + 0])
+                 :"v" (in_0[hipThreadIdx_x * vec_length + 0]), "v" (in_1[hipThreadIdx_x * vec_length + 0]));
+
+    asm volatile("v_add_f32_e32 %0, %1, %2"
+                 :"=v" (out[index * vec_length + 1])
+                 :"v" (in_0[hipThreadIdx_x * vec_length + 1]), "v" (in_1[hipThreadIdx_x * vec_length + 1]));
+    
+    asm volatile("v_add_f32_e32 %0, %1, %2"
+                 :"=v" (out[index * vec_length + 2])
+                 :"v" (in_0[hipThreadIdx_x * vec_length + 2]), "v" (in_1[hipThreadIdx_x * vec_length + 2]));
+    
+    asm volatile("v_add_f32_e32 %0, %1, %2"
+                 :"=v" (out[index * vec_length + 3])
+                 :"v" (in_0[hipThreadIdx_x * vec_length + 3]), "v" (in_1[hipThreadIdx_x * vec_length + 3]));
+    
+    asm volatile("v_add_f32_e32 %0, %1, %2"
+                 :"=v" (out[index * vec_length + 4])
+                 :"v" (in_0[hipThreadIdx_x * vec_length + 4]), "v" (in_1[hipThreadIdx_x * vec_length + 4]));
+
+    asm volatile("v_add_f32_e32 %0, %1, %2"
+                 :"=v" (out[index * vec_length + 5])
+                 :"v" (in_0[hipThreadIdx_x * vec_length + 5]), "v" (in_1[hipThreadIdx_x * vec_length + 5]));
+
+    asm volatile("v_add_f32_e32 %0, %1, %2"
+                 :"=v" (out[index * vec_length + 6])
+                 :"v" (in_0[hipThreadIdx_x * vec_length + 6]), "v" (in_1[hipThreadIdx_x * vec_length + 6]));
+    
+    asm volatile("v_add_f32_e32 %0, %1, %2"
+                 :"=v" (out[index * vec_length + 7])
+                 :"v" (in_0[hipThreadIdx_x * vec_length + 7]), "v" (in_1[hipThreadIdx_x * vec_length + 7]));
+
+#else
+#pragma unroll
     for (i = 0; i < vec_length; i++)
     {
         in_0_sm[hipThreadIdx_x * vec_length + i] = in_0[index * vec_length + i];
         in_1_sm[hipThreadIdx_x * vec_length + i] = in_1[index * vec_length + i];
+#if USE_INLINE_ASM
+        asm volatile("v_add_f32_e32 %0, %1, %2"
+                     :"=v" (out[index * vec_length + i])
+                     :"v" (in_0_sm[hipThreadIdx_x * vec_length + i]), "v" (in_1_sm[hipThreadIdx_x * vec_length + i]));
+#else
         out[index * vec_length + i] = in_0_sm[hipThreadIdx_x * vec_length + i] + in_1_sm[hipThreadIdx_x * vec_length + i];
+#endif
     }
+#endif
     //__syncthreads();
 
     //out_sm[hipThreadIdx_x] = in_0_sm[hipThreadIdx_x] + in_1_sm[hipThreadIdx_x];
@@ -128,8 +171,8 @@ int main(int argc, char** argv)
 
     // initialize the input data
     for (i = 0; i < VEC_LEN; i++) {
-        vector_0[i] = (float)i * 10.0f;
-        vector_1[i] = (float)i * 10.0f;
+        vector_0[i] = (float)i * 10.0f / 3;
+        vector_1[i] = (float)i * 10.0f / 3;
     }
 
     // computation reference

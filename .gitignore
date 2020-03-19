@@ -1,3 +1,5 @@
 *.o
 *.co
 *.exe
+*.isa
+*.hsaco
