@@ -134,8 +134,6 @@ void sgemm_128x128(
         S_FMA4x4((float*)&c[12], (float*)&a[1], (float*)&b[1])
     }
 
-    __syncthreads();
-
     {
         #pragma unroll
         for(int i=0;i<16;i++){ c[i].x*=alpha; c[i].y*=alpha; c[i].z*=alpha; c[i].w*=alpha;}

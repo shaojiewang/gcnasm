@@ -1,15 +1,27 @@
-#include <stdio.h>
-#include <hip/hip_runtime.h>
-#include <random>
+/**************
+ * 现在没人鸟你是啥JB license
+ * 为以后放license预留之地
+**************/
 #include <iostream>
-#include <stdlib.h>
-#include <math.h>
+#include <stdint.h>
+#include <hip/hip_runtime.h>
+
 #ifdef USE_MKL
 #include <mkl.h>
 #endif
 
-#define PER_PIXEL_CHECK
-#define ASSERT_ON_FAIL
+#define HSACO "gemm_gcn.co"
+//#define HSACO "gemm_gcn_asm.co"
+#define HSA_KERNEL "sgemm_128x64"
+
+#define SGEMM_M 4096
+#define SGEMM_N 4096
+#define SGEMM_K 4096
+
+using namespace std;
+
+#define PER_PIXEL_CHECK 1
+#define ASSERT_ON_FAIL 1
 
 #ifndef ABS
 #define ABS(x) ((x)>0?(x):-1*(x))
@@ -19,7 +31,7 @@ static inline bool valid_vector( const float* ref, const float* pred, int n, dou
 {
     double s0=0.0;
     double s1=0.0;
-#ifdef PER_PIXEL_CHECK
+#if PER_PIXEL_CHECK
     int pp_err = 0;
 #endif
     for( int i=0; i<n; ++i ){
@@ -30,11 +42,11 @@ static inline bool valid_vector( const float* ref, const float* pred, int n, dou
         double rr=2.0*ri*ri;
         s0+=dd;
         s1+=rr;
-#ifdef PER_PIXEL_CHECK
+#if PER_PIXEL_CHECK
         double delta = ABS(ri-pi)/ri;
-        if(delta>3e-5){
-#ifdef ASSERT_ON_FAIL
-            //if(pp_err<100)
+        if(delta>1e-5){
+#if ASSERT_ON_FAIL
+            if(pp_err<500)
                 printf("diff at %4d, ref:%lf, pred:%lf(0x%08x), d:%lf\n",i,ri,pi,((uint32_t*)pred)[i],delta);
 #endif
             pp_err++;
@@ -42,8 +54,9 @@ static inline bool valid_vector( const float* ref, const float* pred, int n, dou
 #endif
     }
     printf("nrms:%lf, s0:%lf, s1:%lf\n",sqrt(s0/s1),s0,s1);
+    printf("total err num=[%d]\r\n", pp_err);
     return (sqrt(s0/s1)<nrms)
-#ifdef PER_PIXEL_CHECK
+#if PER_PIXEL_CHECK
         && (pp_err==0)
 #endif
     ;
@@ -80,18 +93,10 @@ void sgemm_cr(
 #define HIP_CALL(call) do{  \
     hipError_t err = call;  \
     if(err != hipSuccess){  \
-        printf("[hiperror](%d) fail to call %s",(int)err,#call);    \
+        printf("[hiperror %s, %d](%d) fail to call %s", __FILE__, __LINE__, (int)err,#call);    \
         exit(0);            \
     }                       \
 } while(0)
-
-static inline int get_int(const char* env_name, int def_value)
-{
-    char * v = getenv(env_name);
-    if(v)
-        return atoi(v);
-    return def_value;
-}
 
 void rand_vector_2d(float* v, int row, int col, int ld){
     int r,c;
@@ -101,39 +106,43 @@ void rand_vector_2d(float* v, int row, int col, int ld){
     for(r=0;r<row;r++){
         for(c=0;c<col;c++){
             v[r*ld+c] = ((float)(rand() % 100)) / 100.0f;
-            //v[r*ld+c] = ((float)(r % 100)+1) / 100.0f + ((float)(c % 100)+1) / 1000.0f;
-            //v[r*ld+c] = 0.01;
+            //v[r*ld+c] = ((float)(r % 10)+1) + ((float)(c % 10)+1);
+            //v[r*ld+c] = 1;
         }
     }
 }
 
-#define HSACO "kernel.co"
-#define HSA_KERNEL "sgemm_64x64_wr"
+int main(int argc, char *argv[])
+{
+    // check input args
+    if (argc < 3)
+    {
+        cout << "arg num wrong: " << argc << endl;
+        return 0;
+    }
+    // 
+    uint32_t validate = atoi(argv[1]);
+    uint32_t num_iter = atoi(argv[2]);
 
-#define SGEMM_M 768
-#define SGEMM_N 768
-#define SGEMM_K 8192
+    hipModule_t kernel_module;
+    hipFunction_t device_func; 
 
-int main(int argc, char ** argv){
-    hipModule_t module;
-    hipFunction_t kernel_func;
-    hipEvent_t evt_00, evt_11;
+    hipEvent_t t_start, t_end;
+
     HIP_CALL(hipSetDevice(0));
+    HIP_CALL(hipModuleLoad(&kernel_module, HSACO));
+    HIP_CALL(hipModuleGetFunction(&device_func, kernel_module, HSA_KERNEL));
 
-    HIP_CALL(hipModuleLoad(&module, HSACO));
-    HIP_CALL(hipModuleGetFunction(&kernel_func, module, HSA_KERNEL));
-
-    int validate = 1;//get_int("VALIDATE", 0);
-    int m = get_int("M", SGEMM_M);
-    int n = get_int("N", SGEMM_N);
-    int k = get_int("K", SGEMM_K);
+    int m = SGEMM_M;
+    int n = SGEMM_N;
+    int k = SGEMM_K;
     int lda = m*sizeof(float);
     int ldb = n*sizeof(float);
     int ldc = m*sizeof(float);
     float alpha = 1.0f;
     float *host_a, *host_b, *host_c, *dev_a, *dev_b, *dev_c, *host_ch;
     int bdx = 256;
-    int gdx = ((m+63)>>6)*((n+63)>>6);
+    int gdx = ((m+63)>>6)*((n+127)>>7);
 
     host_a = (float*)malloc(lda*k);
     host_b = (float*)malloc(ldb*k);
@@ -148,9 +157,9 @@ int main(int argc, char ** argv){
     HIP_CALL(hipMemcpy(dev_a, host_a, lda*k, hipMemcpyHostToDevice));
     HIP_CALL(hipMemcpy(dev_b, host_b, ldb*k, hipMemcpyHostToDevice));
 
-    int total_loop=100;
-    int warm_ups = 5;
-    int i;
+    uint32_t total_loop=num_iter;
+    uint32_t warm_ups = 5;
+    int32_t i;
 
     struct __attribute__((packed)) {
         void*  ptr_c;
@@ -179,33 +188,35 @@ int main(int argc, char ** argv){
                     &arg_size, HIP_LAUNCH_PARAM_END};
 
     for(i=0;i<warm_ups;i++)
-        HIP_CALL(hipModuleLaunchKernel(kernel_func, gdx,1,1, bdx,1,1,  0, 0, NULL, (void**)&config ));
+        HIP_CALL(hipModuleLaunchKernel(device_func, gdx,1,1, bdx,1,1,  0, 0, NULL, (void**)&config ));
 
-    hipEventCreate(&evt_00);
-    hipEventCreate(&evt_11);
+    hipEventCreate(&t_start);
+    hipEventCreate(&t_end);
 
     hipDeviceSynchronize();
-    hipEventRecord(evt_00, NULL);
+    hipEventRecord(t_start, NULL);
     for(i=0;i<total_loop;i++)
-        HIP_CALL(hipModuleLaunchKernel(kernel_func, gdx,1,1, bdx,1,1,  0, 0, NULL, (void**)&config ));
+        HIP_CALL(hipModuleLaunchKernel(device_func, gdx,1,1, bdx,1,1,  0, 0, NULL, (void**)&config ));
+
 
     float elapsed_ms;
-    hipEventRecord(evt_11, NULL);
-    hipEventSynchronize(evt_11);
+    hipEventRecord(t_end, NULL);
+    hipEventSynchronize(t_end);
     hipDeviceSynchronize();
-    hipEventElapsedTime(&elapsed_ms, evt_00, evt_11);
-    hipEventDestroy(evt_00);
-    hipEventDestroy(evt_11);
+    hipEventElapsedTime(&elapsed_ms, t_start, t_end);
+    hipEventDestroy(t_start);
+    hipEventDestroy(t_end);
 
     float time_per_loop = elapsed_ms/total_loop;
-    float gflops = (float)2*m*n*k/time_per_loop/(1e6);
-    printf("m:%d,n:%d,k:%d,gflops:%.3f",m,n,k,gflops);
+    float gflops = (float)2*m*n*k/(time_per_loop * 1e6);
+    printf("m:%d,n:%d,k:%d,gflops:%.3f\r\n",m,n,k,gflops);
     if(validate){
         sgemm_cr(host_c, host_a, host_b, alpha, m,n,k,lda/sizeof(float),ldb/sizeof(float),ldc/sizeof(float));
         host_ch = (float*)malloc(ldc*n);
         HIP_CALL(hipMemcpy(host_ch, dev_c, ldc*n, hipMemcpyDeviceToHost));
         bool res = valid_vector( host_c, host_ch, m*n );
-        printf(",%s",res?"valid":"fail");
+        printf("%s",res?"valid":"fail");
     }
     printf("\n");
+
 }

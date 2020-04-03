@@ -32,7 +32,7 @@ static inline bool valid_vector( const float* ref, const float* pred, int n, dou
         s1+=rr;
 #ifdef PER_PIXEL_CHECK
         double delta = ABS(ri-pi)/ri;
-        if(delta>3e-5){
+        if(delta>1e-5){
 #ifdef ASSERT_ON_FAIL
             if(pp_err<100)
                 printf("diff at %4d, ref:%lf, pred:%lf(0x%08x), d:%lf\n",i,ri,pi,((uint32_t*)pred)[i],delta);
@@ -41,7 +41,7 @@ static inline bool valid_vector( const float* ref, const float* pred, int n, dou
         }
 #endif
     }
-    //printf("nrms:%lf, s0:%lf, s1:%lf\n",sqrt(s0/s1),s0,s1);
+    printf("nrms:%lf, s0:%lf, s1:%lf\n",sqrt(s0/s1),s0,s1);
     return (sqrt(s0/s1)<nrms)
 #ifdef PER_PIXEL_CHECK
         && (pp_err==0)
@@ -107,8 +107,8 @@ void rand_vector_2d(float* v, int row, int col, int ld){
     }
 }
 
-//#define HSACO "kernel.co"
-#define HSACO "kernel_asm.co"
+#define HSACO "kernel.co"
+//#define HSACO "kernel_asm.co"
 #define HSA_KERNEL "sgemm_128x128"
 
 #define SGEMM_M 4096
@@ -124,7 +124,7 @@ int main(int argc, char ** argv){
     HIP_CALL(hipModuleLoad(&module, HSACO));
     HIP_CALL(hipModuleGetFunction(&kernel_func, module, HSA_KERNEL));
 
-    int validate = get_int("VALIDATE", 0);
+    int validate = get_int("VALIDATE", 1);
     int m = get_int("M", SGEMM_M);
     int n = get_int("N", SGEMM_N);
     int k = get_int("K", SGEMM_K);
@@ -200,7 +200,7 @@ int main(int argc, char ** argv){
 
     float time_per_loop = elapsed_ms/total_loop;
     float gflops = (float)2*m*n*k/time_per_loop/(1e6);
-    printf("m:%d,n:%d,k:%d,gflops:%.3f",m,n,k,gflops);
+    printf("m:%d,n:%d,k:%d,gflops:%.3f\r\n",m,n,k,gflops);
     if(validate){
         sgemm_cr(host_c, host_a, host_b, alpha, m,n,k,lda/sizeof(float),ldb/sizeof(float),ldc/sizeof(float));
         host_ch = (float*)malloc(ldc*n);

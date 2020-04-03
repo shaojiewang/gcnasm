@@ -1,12 +1,10 @@
-HIP_PATH?=$(wildcard /opt/rocm/hip)
+HIP_PATH?=$(wildcard /opt/rocm-3.1.0/hip)
 
 ifeq (,$(HIP_PATH))
 	$(error "pls choose a hip path")
 endif
 
 HIPCC=$(HIP_PATH)/bin/hipcc
-
-TARGET=hcc
 
 SOURCES=$(wildcard *.cc)
 OBJECTS=$(patsubst %.cc,%.o,$(SOURCES))
@@ -21,7 +19,7 @@ CXXFLAGS=-g
 CXX=$(HIPCC)
 
 test: $(EXECUTABLE)
-	$(EXECUTABLE)
+	echo $(EXECUTABLE)
 
 $(EXECUTABLE): $(OBJECTS)
 	$(HIPCC) $(OBJECTS) -o $@

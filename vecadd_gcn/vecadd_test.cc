@@ -13,7 +13,7 @@
 #define __MAX_VEC_LEN__ 32
 #define USE_DYNAMIC_SHARED_MEM 0
 #define USE_INLINE_ASM 1
-#define LOOP_INLINE_ASM 1
+#define LOOP_INLINE_ASM 0
 
 #define VEC_LEN (1024 * 1024 * 16)
 
@@ -41,42 +41,9 @@ __global__ void vector_add(float* out, float* in_0, float* in_1, const int vec_l
 #else
     __shared__ float in_0_sm[256 * __MAX_VEC_LEN__];
     __shared__ float in_1_sm[256 * __MAX_VEC_LEN__];
-    //__shared__ float out_sm[256 * __MAX_VEC_LEN__];
 #endif
 
 #if LOOP_INLINE_ASM // use asm for the whole loop
-    asm volatile("v_add_f32_e32 %0, %1, %2"
-                 :"=v" (out[index * vec_length + 0])
-                 :"v" (in_0[hipThreadIdx_x * vec_length + 0]), "v" (in_1[hipThreadIdx_x * vec_length + 0]));
-
-    asm volatile("v_add_f32_e32 %0, %1, %2"
-                 :"=v" (out[index * vec_length + 1])
-                 :"v" (in_0[hipThreadIdx_x * vec_length + 1]), "v" (in_1[hipThreadIdx_x * vec_length + 1]));
-    
-    asm volatile("v_add_f32_e32 %0, %1, %2"
-                 :"=v" (out[index * vec_length + 2])
-                 :"v" (in_0[hipThreadIdx_x * vec_length + 2]), "v" (in_1[hipThreadIdx_x * vec_length + 2]));
-    
-    asm volatile("v_add_f32_e32 %0, %1, %2"
-                 :"=v" (out[index * vec_length + 3])
-                 :"v" (in_0[hipThreadIdx_x * vec_length + 3]), "v" (in_1[hipThreadIdx_x * vec_length + 3]));
-    
-    asm volatile("v_add_f32_e32 %0, %1, %2"
-                 :"=v" (out[index * vec_length + 4])
-                 :"v" (in_0[hipThreadIdx_x * vec_length + 4]), "v" (in_1[hipThreadIdx_x * vec_length + 4]));
-
-    asm volatile("v_add_f32_e32 %0, %1, %2"
-                 :"=v" (out[index * vec_length + 5])
-                 :"v" (in_0[hipThreadIdx_x * vec_length + 5]), "v" (in_1[hipThreadIdx_x * vec_length + 5]));
-
-    asm volatile("v_add_f32_e32 %0, %1, %2"
-                 :"=v" (out[index * vec_length + 6])
-                 :"v" (in_0[hipThreadIdx_x * vec_length + 6]), "v" (in_1[hipThreadIdx_x * vec_length + 6]));
-    
-    asm volatile("v_add_f32_e32 %0, %1, %2"
-                 :"=v" (out[index * vec_length + 7])
-                 :"v" (in_0[hipThreadIdx_x * vec_length + 7]), "v" (in_1[hipThreadIdx_x * vec_length + 7]));
-
 #else
 #pragma unroll
     for (i = 0; i < vec_length; i++)
