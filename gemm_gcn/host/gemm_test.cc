@@ -10,15 +10,15 @@
 #include <mkl.h>
 #endif
 
+using namespace std;
+
 #define HSACO "gemm_gcn.co"
-//#define HSACO "gemm_gcn_asm.co"
-#define HSA_KERNEL "sgemm_128x64"
+#define HSAASMCO "gemm_gcn_asm.co"
+#define HSA_KERNEL(a) "sgemm_128x"#a
 
 #define SGEMM_M 4096
 #define SGEMM_N 4096
 #define SGEMM_K 4096
-
-using namespace std;
 
 #define PER_PIXEL_CHECK 1
 #define ASSERT_ON_FAIL 1
@@ -26,6 +26,19 @@ using namespace std;
 #ifndef ABS
 #define ABS(x) ((x)>0?(x):-1*(x))
 #endif
+
+static inline uint32_t log2uint(uint32_t input_num)
+{
+    uint32_t res, tmp_num;
+    tmp_num = input_num;
+    res = 0;
+    while (tmp_num >> 1)
+    {
+        tmp_num = tmp_num >> 1;
+        res++;
+    }
+    return res;
+}
 
 static inline bool valid_vector( const float* ref, const float* pred, int n, double nrms = 1e-6 )
 {
@@ -115,14 +128,22 @@ void rand_vector_2d(float* v, int row, int col, int ld){
 int main(int argc, char *argv[])
 {
     // check input args
-    if (argc < 3)
+    if (argc != 5)
     {
         cout << "arg num wrong: " << argc << endl;
         return 0;
     }
-    // 
+     
     uint32_t validate = atoi(argv[1]);
     uint32_t num_iter = atoi(argv[2]);
+    uint32_t block_tile_a = atoi(argv[3]);
+    uint32_t load_asm_co = atoi(argv[4]);
+
+    if ((block_tile_a != 64) && (block_tile_a != 128))
+    {
+        cout << "a matrix tile size wrong: " << block_tile_a << endl;
+        return 0;
+    }
 
     hipModule_t kernel_module;
     hipFunction_t device_func; 
@@ -130,8 +151,19 @@ int main(int argc, char *argv[])
     hipEvent_t t_start, t_end;
 
     HIP_CALL(hipSetDevice(0));
-    HIP_CALL(hipModuleLoad(&kernel_module, HSACO));
-    HIP_CALL(hipModuleGetFunction(&device_func, kernel_module, HSA_KERNEL));
+    if (load_asm_co)
+        HIP_CALL(hipModuleLoad(&kernel_module, HSAASMCO));
+    else
+        HIP_CALL(hipModuleLoad(&kernel_module, HSACO));
+    if (128 == block_tile_a)
+        HIP_CALL(hipModuleGetFunction(&device_func, kernel_module, HSA_KERNEL(128)));
+    else if (64 == block_tile_a)
+        HIP_CALL(hipModuleGetFunction(&device_func, kernel_module, HSA_KERNEL(64)));
+    else
+    {
+        cout << "a matrix tile size wrong: " << block_tile_a << endl;
+        return 0;
+    }
 
     int m = SGEMM_M;
     int n = SGEMM_N;
@@ -142,7 +174,7 @@ int main(int argc, char *argv[])
     float alpha = 1.0f;
     float *host_a, *host_b, *host_c, *dev_a, *dev_b, *dev_c, *host_ch;
     int bdx = 256;
-    int gdx = ((m+63)>>6)*((n+127)>>7);
+    int gdx = ((m + block_tile_a - 1) >> (log2uint(block_tile_a)))*((n + 127) >> 7);
 
     host_a = (float*)malloc(lda*k);
     host_b = (float*)malloc(ldb*k);

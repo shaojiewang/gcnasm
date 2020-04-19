@@ -133,6 +133,7 @@ void sgemm_128x128(
         S_FMA4x4((float*)&c[8] , (float*)&a[0], (float*)&b[1])
         S_FMA4x4((float*)&c[12], (float*)&a[1], (float*)&b[1])
     }
+    __syncthreads();
 
     {
         #pragma unroll

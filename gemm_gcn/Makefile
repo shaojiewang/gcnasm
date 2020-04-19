@@ -17,6 +17,8 @@ endif
 
 HIPCC=$(ROCM_PATH)/hip/bin/hipcc
 HCC=$(ROCM_PATH)/hcc/bin/hcc
+CLANG=$(ROCM_PATH)/hcc/bin/clang
+OBJDUMP=$(ROCM_PATH)/hcc/bin/llvm-objdump
 
 CXX=$(HIPCC)
 
@@ -24,9 +26,11 @@ SRC=$(wildcard ./host/*.cc)
 KSRC=$(wildcard ./kernel/*.cc)
 KSRC_ASM=$(wildcard ./kernel/*.s)
 
+KDUMP_ASM=$(notdir $(KSRC_ASM))
+
 OBJS=$(patsubst %.cc,%.o,$(SRC))
 KOBJS=$(patsubst %.cc,%.o,$(KSRC))
-KOBJS_ASM=$(patsubst %.cc,%.o,$(KSRC_ASM))
+KOBJS_ASM=$(patsubst %.s,%.o,$(KSRC_ASM))
 
 CXXFLAGS=-D__HIP_PLATFORM_HCC__=  -I$(ROCM_PATH)/hip/include -I$(ROCM_PATH)/hcc/include -I$(ROCM_PATH)/hsa/include \
 	-Wall -O2  -std=c++11
@@ -42,6 +46,7 @@ ifeq (1,$(USE_MKL))
 endif
 
 KTARGET=./gemm_gcn.co
+KTARGET_ASM=./gemm_gcn_asm.co
 TARGET=./gemm_gcn_test
 DTARGET=./gemm_gcn_debug
 
@@ -50,7 +55,8 @@ DTARGET=./gemm_gcn_debug
 .PHONY: clean
 .PHONY: debug
 
-all: $(TARGET) $(KTARGET)
+all: $(TARGET) $(KTARGET) $(KTARGET_ASM)
+	$(OBJDUMP) -disassemble -mcpu=$(ARCH) $(KTARGET_ASM) > dump.vega_gemm.s
 
 $(TARGET): $(OBJS)
 	$(HIPCC) $(OBJS) $(LDFLAGS) $(CXXFLAGS) -o $@
@@ -58,11 +64,14 @@ $(TARGET): $(OBJS)
 $(KTARGET): $(KSRC)
 	$(HIPCC) --genco --targets $(ARCH) $(KSRC) -o $@
 
+$(KTARGET_ASM): $(KSRC_ASM)
+	$(CLANG) -x assembler -target amdgcn--amdhsa -mcpu=$(ARCH) -mno-code-object-v3 $(KSRC_ASM) -o $@
+	
 debug: $(DTARGET) $(KTARGET)
 
 $(DTARGET): $(SRC)
 	$(HIPCC) $(SRC) $(LDFLAGS) $(CXXFLAGS) -g -o $@
 
 clean:
-	rm -f $(TARGET) $(KTARGET) $(OBJS) $(KOBJS) $(DTARGET)
+	rm -f $(TARGET) $(KTARGET) $(OBJS) $(KOBJS) $(DTARGET) $(KTARGET_ASM)
 	rm -f dump*
