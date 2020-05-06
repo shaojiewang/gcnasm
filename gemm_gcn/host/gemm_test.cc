@@ -118,8 +118,8 @@ void rand_vector_2d(float* v, int row, int col, int ld){
 
     for(r=0;r<row;r++){
         for(c=0;c<col;c++){
-            v[r*ld+c] = ((float)(rand() % 100)) / 100.0f;
-            //v[r*ld+c] = ((float)(r % 10)+1) + ((float)(c % 10)+1);
+            //v[r*ld+c] = ((float)(rand() % 100)) / 100.0f;
+            v[r*ld+c] = ((float)(r % 10)+1) + ((float)(c % 10)+1);
             //v[r*ld+c] = 1;
         }
     }
@@ -172,20 +172,21 @@ int main(int argc, char *argv[])
     int ldb = n*sizeof(float);
     int ldc = m*sizeof(float);
     float alpha = 1.0f;
-    float *host_a, *host_b, *host_c, *dev_a, *dev_b, *dev_c, *host_ch;
+    float *host_a, *host_b, *host_c, *dev_a, *dev_b, *dev_c, *host_ch, *host_dbgmsg;
     int bdx = 256;
     int gdx = ((m + block_tile_a - 1) >> (log2uint(block_tile_a)))*((n + 127) >> 7);
 
     host_a = (float*)malloc(lda*k);
     host_b = (float*)malloc(ldb*k);
     host_c = (float*)malloc(ldc*n);
+    host_dbgmsg = (float*)malloc(256 * 4);
     rand_vector_2d(host_a, k, m, lda/sizeof(float));
     rand_vector_2d(host_b, k, n, ldb/sizeof(float));
 
     HIP_CALL(hipSetDevice(0));
     HIP_CALL(hipMalloc(&dev_a, lda*k));
     HIP_CALL(hipMalloc(&dev_b, ldb*k));
-    HIP_CALL(hipMalloc(&dev_c, ldc*n));
+    HIP_CALL(hipMalloc(&dev_c, ldc*n + 256 * 4));
     HIP_CALL(hipMemcpy(dev_a, host_a, lda*k, hipMemcpyHostToDevice));
     HIP_CALL(hipMemcpy(dev_b, host_b, ldb*k, hipMemcpyHostToDevice));
 
@@ -238,6 +239,12 @@ int main(int argc, char *argv[])
     hipEventElapsedTime(&elapsed_ms, t_start, t_end);
     hipEventDestroy(t_start);
     hipEventDestroy(t_end);
+
+    // debug sec
+    HIP_CALL(hipMemcpy(host_dbgmsg, dev_c, 256 * 4, hipMemcpyDeviceToHost));
+    printf("var to monitor:[%f, %f, %f, %f]\r\n", host_dbgmsg[0], host_dbgmsg[1], host_dbgmsg[2], host_dbgmsg[3]);
+    printf("var to monitor:[%d, %d, %d, %d]\r\n", ((int *)host_dbgmsg)[0], ((int *)host_dbgmsg)[1], 
+                                                ((int *)host_dbgmsg)[2], ((int *)host_dbgmsg)[3]);
 
     float time_per_loop = elapsed_ms/total_loop;
     float gflops = (float)2*m*n*k/(time_per_loop * 1e6);
