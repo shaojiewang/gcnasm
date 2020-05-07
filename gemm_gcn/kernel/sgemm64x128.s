@@ -34,6 +34,7 @@
 
 .macro .s_fma4x8 c, a, b
     v_mac_f32 v[\c+0 ], v[\a+0],  v[\b+0]
+    ;s_setprio 1
     v_mac_f32 v[\c+1 ], v[\a+1],  v[\b+0]
     v_mac_f32 v[\c+2 ], v[\a+2],  v[\b+0]
     v_mac_f32 v[\c+3 ], v[\a+3],  v[\b+0]
@@ -66,6 +67,8 @@
     v_mac_f32 v[\c+29], v[\a+1],  v[\b+7]
     v_mac_f32 v[\c+30], v[\a+2],  v[\b+7]
     v_mac_f32 v[\c+31], v[\a+3],  v[\b+7]
+
+    ;s_setprio 0
 
 .endm
 
@@ -159,8 +162,8 @@ sgemm_128x64:
     .end_amd_kernel_code_t
 
     ; debug vgpr
-    v_lshlrev_b32 v[32], 2, v0
-    s_load_dwordx2 s[s_tmp+10:s_tmp+11], s[s_ka:s_ka+1], k_ptr_c
+    ;v_lshlrev_b32 v[32], 2, v0
+    ;s_load_dwordx2 s[s_tmp+10:s_tmp+11], s[s_ka:s_ka+1], k_ptr_c
 
     ; kernel params
     s_load_dwordx4 s[s_ptr_c:s_ptr_c+3], s[s_ka:s_ka+1], k_ptr_c
@@ -278,8 +281,6 @@ L_sgemm64x128_k_loop_start:
     s_add_u32 s[s_ptr_a], s[s_ptr_a], s[s_bs_a]
     s_addc_u32 s[s_ptr_a+1], s[s_ptr_a+1], 0
 
-    ;s_branch  debug_code_seg
-
     ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x1000
     
     s_add_u32 s[s_ptr_b], s[s_ptr_b], s[s_bs_b]
@@ -297,12 +298,11 @@ L_sgemm64x128_k_loop_start:
         .if .cnt == 6
             s_waitcnt vmcnt(3)
             ds_write_b64 v[v_smem_store_a], v[v_p1:v_p1+1], offset:0x2000
-            s_waitcnt lgkmcnt(5)
-        .else
             s_waitcnt lgkmcnt(4)
+        .else
+            s_waitcnt lgkmcnt(3)
         .endif
         .s_fma4x8 v_c, v_a0, v_b0
-        ;s_branch  debug_code_seg
         .cnt = .cnt + 1
 
         .if .cnt == 1
@@ -310,7 +310,7 @@ L_sgemm64x128_k_loop_start:
             global_load_dwordx4 v[v_q0:v_q0+3], v[v_os_b:v_os_b+1], s[s_ptr_b:s_ptr_b+1]
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0
             ds_read_b128 v[v_b0+4:v_b0+7], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0x80
-            s_waitcnt lgkmcnt(4)
+            s_waitcnt lgkmcnt(3)
         .else
         .if .cnt == 7
             s_waitcnt vmcnt(2)
@@ -349,9 +349,9 @@ L_sgemm64x128_k_loop_start:
         .if .cnt == 6
             s_waitcnt vmcnt(3)
             ds_write_b64 v[v_smem_store_a], v[v_p0:v_p0+1], offset:0
-            s_waitcnt lgkmcnt(5)
-        .else
             s_waitcnt lgkmcnt(4)
+        .else
+            s_waitcnt lgkmcnt(3)
         .endif
         .s_fma4x8 v_c, v_a0, v_b0
         .cnt = .cnt + 1
@@ -361,7 +361,7 @@ L_sgemm64x128_k_loop_start:
             global_load_dwordx4 v[v_q1:v_q1+3], v[v_os_b:v_os_b+1], s[s_ptr_b:s_ptr_b+1]
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0
             ds_read_b128 v[v_b0+4:v_b0+7], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0x80
-            s_waitcnt lgkmcnt(4)
+            s_waitcnt lgkmcnt(3)
         .else
         .if .cnt == 7
             s_waitcnt vmcnt(2)
@@ -399,9 +399,9 @@ L_sgemm64x128_k_loop_end:
         .if .cnt == 6
             s_waitcnt vmcnt(3)
             ds_write_b64 v[v_smem_store_a], v[v_p1:v_p1+1], offset:0x2000
-            s_waitcnt lgkmcnt(5)
-        .else
             s_waitcnt lgkmcnt(4)
+        .else
+            s_waitcnt lgkmcnt(3)
         .endif
         .s_fma4x8 v_c, v_a0, v_b0
         .cnt = .cnt + 1
@@ -410,7 +410,7 @@ L_sgemm64x128_k_loop_end:
             ds_read_b128 v[v_a0+0:v_a0+3], v[v_smem_load_a], offset:(.cnt+1)*0x100+0
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0
             ds_read_b128 v[v_b0+4:v_b0+7], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0x80
-            s_waitcnt lgkmcnt(4)
+            s_waitcnt lgkmcnt(3)
         .else
         .if .cnt == 7
             s_waitcnt vmcnt(2)
@@ -439,7 +439,7 @@ L_sgemm64x128_k_loop_end:
         ds_read_b128 v[v_b1+0:v_b1+3], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0
         ds_read_b128 v[v_b1+4:v_b1+7], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0x80
 
-        s_waitcnt lgkmcnt(4)
+        s_waitcnt lgkmcnt(3)
         .s_fma4x8 v_c, v_a0, v_b0
 
         .cnt = .cnt + 1
@@ -448,7 +448,7 @@ L_sgemm64x128_k_loop_end:
             ds_read_b128 v[v_a0+0:v_a0+3], v[v_smem_load_a], offset:0x2000+(.cnt+1)*0x100+0
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0
             ds_read_b128 v[v_b0+4:v_b0+7], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0x80
-            s_waitcnt lgkmcnt(4)
+            s_waitcnt lgkmcnt(3)
         .else
         .if .cnt == 7
             s_waitcnt lgkmcnt(0)
@@ -462,15 +462,47 @@ L_sgemm64x128_k_loop_end:
         .cnt = .cnt + 1
     .endr
 
+    ;s_branch program_end
+    ; store c process
+    .cnt=0
+    .rept 4
+        .set .cid, .cnt<<1
+        .set .cof, ((.cnt>>1)<<5)|((.cnt&1)<<1)
+
+        ds_write_b128 v[v_smem_store_c], v[v_c+4*.cid+0:v_c+4*.cid+3], offset:0
+        ds_write_b128 v[v_smem_store_c], v[v_c+4*.cid+4:v_c+4*.cid+7], offset:0x100
+        s_waitcnt lgkmcnt(0)
+        s_barrier
+
+        ds_read_b128 v[v_c+4*.cid+0:v_c+4*.cid+3], v[v_smem_load_c], offset:0
+        ds_read_b128 v[v_c+4*.cid+4:v_c+4*.cid+7], v[v_smem_load_c], offset:0x1000
+
+        s_mul_i32 s[s_tmp], .cof+0, s[s_ldc]
+        v_add_co_u32 v[v_tmp], vcc, s[s_tmp], v[v_os_c]
+        v_addc_co_u32  v[v_tmp+1], vcc, 0, v[v_os_c+1], vcc
+        s_waitcnt lgkmcnt(1)
+        global_store_dwordx4 v[v_tmp:v_tmp+1], v[v_c+4*.cid+0:v_c+4*.cid+3], s[s_ptr_c: s_ptr_c+1]
+
+        s_mul_i32 s[s_tmp], .cof+64, s[s_ldc]
+        v_add_co_u32 v[v_tmp], vcc, s[s_tmp], v[v_os_c]
+        v_addc_co_u32  v[v_tmp+1], vcc, 0, v[v_os_c+1], vcc
+        s_waitcnt lgkmcnt(0)
+        global_store_dwordx4 v[v_tmp:v_tmp+1], v[v_c+4*.cid+4:v_c+4*.cid+7], s[s_ptr_c: s_ptr_c+1]
+        .if .cnt!=3
+            s_barrier
+        .endif
+        .cnt=.cnt+1
+    .endr
+
 
     ; debug code to cpy vgpr to host
 debug_code_seg:
-    s_waitcnt lgkmcnt(0)
-    s_barrier
-    s_cmp_lg_u32 s[s_bx], 0
-    s_cbranch_scc1  program_end
-    v_add_co_u32 v34, vcc, 0, v[v_c+1]
-    global_store_dword v[32:33], v34, s[s_tmp+10:s_tmp+11]
+    ;s_waitcnt lgkmcnt(0)
+    ;s_barrier
+    ;s_cmp_lg_u32 s[s_bx], 0
+    ;s_cbranch_scc1  program_end
+    ;v_add_co_u32 v34, vcc, 0, v[v_c+1]
+    ;global_store_dword v[32:33], v34, s[s_tmp+10:s_tmp+11]
 
 program_end:
     s_endpgm

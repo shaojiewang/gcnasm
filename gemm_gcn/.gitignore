@@ -1,0 +1,4 @@
+dump*
+input*
+gemm_gcn_test
+*.co

@@ -59,7 +59,7 @@ static inline bool valid_vector( const float* ref, const float* pred, int n, dou
         double delta = ABS(ri-pi)/ri;
         if(delta>1e-5){
 #if ASSERT_ON_FAIL
-            if(pp_err<500)
+            if(pp_err<100)
                 printf("diff at %4d, ref:%lf, pred:%lf(0x%08x), d:%lf\n",i,ri,pi,((uint32_t*)pred)[i],delta);
 #endif
             pp_err++;
@@ -118,8 +118,8 @@ void rand_vector_2d(float* v, int row, int col, int ld){
 
     for(r=0;r<row;r++){
         for(c=0;c<col;c++){
-            //v[r*ld+c] = ((float)(rand() % 100)) / 100.0f;
-            v[r*ld+c] = ((float)(r % 10)+1) + ((float)(c % 10)+1);
+            v[r*ld+c] = ((float)(rand() % 100)) / 100.0f;
+            //v[r*ld+c] = ((float)(r % 10)+1) + ((float)(c % 10)+1);
             //v[r*ld+c] = 1;
         }
     }
@@ -240,15 +240,16 @@ int main(int argc, char *argv[])
     hipEventDestroy(t_start);
     hipEventDestroy(t_end);
 
+    float time_per_loop = elapsed_ms/total_loop;
+    float gflops = (float)2*m*n*k/(time_per_loop * 1e6);
+    printf("m:%d,n:%d,k:%d,gflops:%.3f\r\n",m,n,k,gflops);
+
     // debug sec
     HIP_CALL(hipMemcpy(host_dbgmsg, dev_c, 256 * 4, hipMemcpyDeviceToHost));
     printf("var to monitor:[%f, %f, %f, %f]\r\n", host_dbgmsg[0], host_dbgmsg[1], host_dbgmsg[2], host_dbgmsg[3]);
     printf("var to monitor:[%d, %d, %d, %d]\r\n", ((int *)host_dbgmsg)[0], ((int *)host_dbgmsg)[1], 
                                                 ((int *)host_dbgmsg)[2], ((int *)host_dbgmsg)[3]);
 
-    float time_per_loop = elapsed_ms/total_loop;
-    float gflops = (float)2*m*n*k/(time_per_loop * 1e6);
-    printf("m:%d,n:%d,k:%d,gflops:%.3f\r\n",m,n,k,gflops);
     if(validate){
         sgemm_cr(host_c, host_a, host_b, alpha, m,n,k,lda/sizeof(float),ldb/sizeof(float),ldc/sizeof(float));
         host_ch = (float*)malloc(ldc*n);
