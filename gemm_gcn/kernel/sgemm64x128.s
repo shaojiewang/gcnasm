@@ -107,41 +107,46 @@
 .set s_tmp,             24
 .set s_end,             s_tmp+13
 
-.set v_c,               0 ; for 64x128 kernel, only use 32 vc
-.set v_a0,              64
-.set v_a1,              72
-.set v_b0,              80
-.set v_b1,              88
-.set v_p0,              96
-.set v_q0,              100
-.set v_lane_id,         104
-.set v_wave_p,          105
-.set v_wave_q,          106
-.set v_lane_lo,         107
-.set v_lane_hi,         108
-.set v_lane_w,          109
-.set v_lane_u,          110
-.set v_lane_v,          111
-.set v_smem_store,      112
-.set v_os_a,            113
-.set v_os_b,            114
-.set v_os_c,            115
-.set v_smem_load_a,     116
-.set v_smem_load_b,     117
-.set v_smem_store_c,    118
-.set v_smem_load_c,     119
-.set v_tmp,             124
+.set v_c,               0   ; for 64x128 kernel, only use 32 vc
+.set v_a0,              32  ; 4 vpgr for v_a0
+.set v_a1,              36  ; 4 vgpr for v_a1
+.set v_b0,              40  ; 8 vgpr for v_b0
+.set v_b1,              48  ; 8 vgpr for v_b1
+.set v_p0,              56  ; 2 vpgr for v_p0 here can insert 2 vpgrs(58 and 59)
+.set v_q0,              60  ; 4 vpgr for v_q0
+.set v_lane_k,          58  ; 1 vgpr for v_lane_k insert to 58
+.set v_lane_l,          59  ; 1 vgpr for v_lane_l insert to 59
+.set v_lane_id,         64  ; 1 vpgr for v_lane_id
+.set v_wave_p,          65  ; 1 vpgr for v_wave_p
+.set v_wave_q,          66  ; 1 vpgr for v_wave_q
+.set v_lane_lo,         67  ; 1 vpgr for v_lane_lo
+.set v_lane_hi,         68  ; 1 vpgr for v_lane_hi
+.set v_lane_w,          69  ; 1 vpgr for v_lane_w
+.set v_lane_u,          70  ; 1 vpgr for v_lane_u
+.set v_lane_v,          71  ; 1 vpgr for v_lane_v
+.set v_smem_store_a,    72  ; 1 vpgr for v_smem_store_a
+.set v_smem_store_b,    73  ; 1 vpgr for v_smem_store_b
+.set v_os_a,            74  ; 1 vpgr for v_os_a
+.set v_os_b,            75  ; 1 vpgr for v_os_b
+.set v_os_c,            76  ; 1 vpgr for v_os_c
+.set v_smem_load_a,     77  ; 1 vpgr for v_smem_load_a
+.set v_smem_load_b,     78  ; 1 vpgr for v_smem_load_b
+.set v_smem_store_c,    79  ; 1 vpgr for v_smem_store_c
+.set v_smem_load_c,     80  ; 1 vpgr for v_smem_load_c
+.set v_lane_m,          81  ; 1 vpgr for v_lane_m
+.set v_lane_lm,         82  ; 1 vpgr for v_lane_lm
+.set v_tmp,             84  
 .set v_end,             v_tmp+3
-.set v_p1,              104
-.set v_q1,              108
+.set v_p1,              64  ; 2 vpgr for v_p1
+.set v_q1,              68  ; 4 vpgr for v_q1
 
 ; 64x128 kernel addition vars
-.set v_lane_k,          63
-.set v_lane_l,          62
-.set v_lane_m,          61
-.set v_smem_store_a,    60
-.set v_smem_store_b,    59
-.set v_lane_lm,         58
+;.set v_lane_k,          63
+;.set v_lane_l,          62
+;.set v_lane_m,          61
+;.set v_smem_store_a,    60
+;.set v_smem_store_b,    59
+;.set v_lane_lm,         58
 
 sgemm_128x64:
     .amd_kernel_code_t
@@ -190,7 +195,6 @@ sgemm_128x64:
     v_or_b32 v[v_lane_lm], v[v_lane_m], v[v_lane_l]
 
     v_lshlrev_b32 v[v_smem_store_a], 3, v0
-    ;v_mov_b32 v[v_tmp], 0x1000
     v_lshlrev_b32 v[v_smem_store_b], 4, v0
 
     .cnt=0
@@ -320,6 +324,7 @@ L_sgemm64x128_k_loop_start:
             ds_read_b128 v[v_a0+0:v_a0+3], v[v_smem_load_a], offset:(.cnt+1)*0x100+0
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0
             ds_read_b128 v[v_b0+4:v_b0+7], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0x80
+            s_waitcnt lgkmcnt(3)
         .endif
         .endif
         .s_fma4x8 v_c, v_a1, v_b1
@@ -371,6 +376,7 @@ L_sgemm64x128_k_loop_start:
             ds_read_b128 v[v_a0+0:v_a0+3], v[v_smem_load_a], offset:0x2000+(.cnt+1)*0x100+0
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0
             ds_read_b128 v[v_b0+4:v_b0+7], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0x80
+            s_waitcnt lgkmcnt(3)
         .endif
         .endif
         .s_fma4x8 v_c, v_a1, v_b1
@@ -397,7 +403,7 @@ L_sgemm64x128_k_loop_end:
         ds_read_b128 v[v_b1+4:v_b1+7], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0x80
 
         .if .cnt == 6
-            s_waitcnt vmcnt(3)
+            s_waitcnt vmcnt(1)
             ds_write_b64 v[v_smem_store_a], v[v_p1:v_p1+1], offset:0x2000
             s_waitcnt lgkmcnt(4)
         .else
@@ -413,13 +419,14 @@ L_sgemm64x128_k_loop_end:
             s_waitcnt lgkmcnt(3)
         .else
         .if .cnt == 7
-            s_waitcnt vmcnt(2)
+            s_waitcnt vmcnt(0)
             ds_write_b128 v[v_smem_store_b], v[v_q1:v_q1+3], offset:0x3000
             s_waitcnt lgkmcnt(1)
         .else
             ds_read_b128 v[v_a0+0:v_a0+3], v[v_smem_load_a], offset:(.cnt+1)*0x100+0
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0
             ds_read_b128 v[v_b0+4:v_b0+7], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0x80
+            s_waitcnt lgkmcnt(3)
         .endif
         .endif
         .s_fma4x8 v_c, v_a1, v_b1
@@ -456,6 +463,7 @@ L_sgemm64x128_k_loop_end:
             ds_read_b128 v[v_a0+0:v_a0+3], v[v_smem_load_a], offset:0x2000+(.cnt+1)*0x100+0
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0
             ds_read_b128 v[v_b0+4:v_b0+7], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0x80
+            s_waitcnt lgkmcnt(3)
         .endif
         .endif
         .s_fma4x8 v_c, v_a1, v_b1
