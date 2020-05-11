@@ -32,7 +32,7 @@
      v_cndmask_b32     v[\v_q], -1, v[\v_tmp4+2], vcc
 .endm
 
-.macro .s_fma4x8 c, a, b
+.macro .s_fma4x8 c, a, b ; real 4x8
     v_mac_f32 v[\c+0 ], v[\a+0],  v[\b+0]
     ;s_setprio 1
     v_mac_f32 v[\c+1 ], v[\a+1],  v[\b+0]
@@ -69,6 +69,81 @@
     v_mac_f32 v[\c+31], v[\a+3],  v[\b+7]
 
     ;s_setprio 0
+
+.endm
+
+.macro .s_fma4x8_fake c, a, b ; fake 4x8
+    v_mac_f32 v[\c+0 ], v[\a+0],  v[\b+0]
+    s_setprio 1
+    v_mac_f32 v[\c+1 ], v[\a+1],  v[\b+0]
+    v_mac_f32 v[\c+2 ], v[\a+2],  v[\b+0]
+    v_mac_f32 v[\c+3 ], v[\a+3],  v[\b+0]
+    v_mac_f32 v[\c+4 ], v[\a+0],  v[\b+1]
+    v_mac_f32 v[\c+5 ], v[\a+1],  v[\b+1]
+    v_mac_f32 v[\c+6 ], v[\a+2],  v[\b+1]
+    v_mac_f32 v[\c+7 ], v[\a+3],  v[\b+1]
+    v_mac_f32 v[\c+8 ], v[\a+0],  v[\b+2]
+    v_mac_f32 v[\c+9 ], v[\a+1],  v[\b+2]
+    v_mac_f32 v[\c+10], v[\a+2],  v[\b+2]
+    v_mac_f32 v[\c+11], v[\a+3],  v[\b+2]
+    v_mac_f32 v[\c+12], v[\a+0],  v[\b+3]
+    v_mac_f32 v[\c+13], v[\a+1],  v[\b+3]
+    v_mac_f32 v[\c+14], v[\a+2],  v[\b+3]
+    v_mac_f32 v[\c+15], v[\a+3],  v[\b+3]
+
+    v_mac_f32 v[\c+16], v[\a+0],  v[\b+4]
+    v_mac_f32 v[\c+17], v[\a+1],  v[\b+4]
+    v_mac_f32 v[\c+18], v[\a+2],  v[\b+4]
+    v_mac_f32 v[\c+19], v[\a+3],  v[\b+4]
+    v_mac_f32 v[\c+20], v[\a+0],  v[\b+5]
+    v_mac_f32 v[\c+21], v[\a+1],  v[\b+5]
+    v_mac_f32 v[\c+22], v[\a+2],  v[\b+5]
+    v_mac_f32 v[\c+23], v[\a+3],  v[\b+5]
+    v_mac_f32 v[\c+24], v[\a+0],  v[\b+6]
+    v_mac_f32 v[\c+25], v[\a+1],  v[\b+6]
+    v_mac_f32 v[\c+26], v[\a+2],  v[\b+6]
+    v_mac_f32 v[\c+27], v[\a+3],  v[\b+6]
+    v_mac_f32 v[\c+28], v[\a+0],  v[\b+7]
+    v_mac_f32 v[\c+29], v[\a+1],  v[\b+7]
+    v_mac_f32 v[\c+30], v[\a+2],  v[\b+7]
+    v_mac_f32 v[\c+31], v[\a+3],  v[\b+7]
+
+
+    v_mac_f32 v[\c+0 ], v[\a+0],  v[\b+0]
+    v_mac_f32 v[\c+1 ], v[\a+1],  v[\b+0]
+    v_mac_f32 v[\c+2 ], v[\a+2],  v[\b+0]
+    v_mac_f32 v[\c+3 ], v[\a+3],  v[\b+0]
+    v_mac_f32 v[\c+4 ], v[\a+0],  v[\b+1]
+    v_mac_f32 v[\c+5 ], v[\a+1],  v[\b+1]
+    v_mac_f32 v[\c+6 ], v[\a+2],  v[\b+1]
+    v_mac_f32 v[\c+7 ], v[\a+3],  v[\b+1]
+    v_mac_f32 v[\c+8 ], v[\a+0],  v[\b+2]
+    v_mac_f32 v[\c+9 ], v[\a+1],  v[\b+2]
+    v_mac_f32 v[\c+10], v[\a+2],  v[\b+2]
+    v_mac_f32 v[\c+11], v[\a+3],  v[\b+2]
+    v_mac_f32 v[\c+12], v[\a+0],  v[\b+3]
+    v_mac_f32 v[\c+13], v[\a+1],  v[\b+3]
+    v_mac_f32 v[\c+14], v[\a+2],  v[\b+3]
+    v_mac_f32 v[\c+15], v[\a+3],  v[\b+3]
+
+    v_mac_f32 v[\c+16], v[\a+0],  v[\b+4]
+    v_mac_f32 v[\c+17], v[\a+1],  v[\b+4]
+    v_mac_f32 v[\c+18], v[\a+2],  v[\b+4]
+    v_mac_f32 v[\c+19], v[\a+3],  v[\b+4]
+    v_mac_f32 v[\c+20], v[\a+0],  v[\b+5]
+    v_mac_f32 v[\c+21], v[\a+1],  v[\b+5]
+    v_mac_f32 v[\c+22], v[\a+2],  v[\b+5]
+    v_mac_f32 v[\c+23], v[\a+3],  v[\b+5]
+    v_mac_f32 v[\c+24], v[\a+0],  v[\b+6]
+    v_mac_f32 v[\c+25], v[\a+1],  v[\b+6]
+    v_mac_f32 v[\c+26], v[\a+2],  v[\b+6]
+    v_mac_f32 v[\c+27], v[\a+3],  v[\b+6]
+    v_mac_f32 v[\c+28], v[\a+0],  v[\b+7]
+    v_mac_f32 v[\c+29], v[\a+1],  v[\b+7]
+    v_mac_f32 v[\c+30], v[\a+2],  v[\b+7]
+    v_mac_f32 v[\c+31], v[\a+3],  v[\b+7]
+
+    s_setprio 0
 
 .endm
 
@@ -140,14 +215,6 @@
 .set v_p1,              64  ; 2 vpgr for v_p1
 .set v_q1,              68  ; 4 vpgr for v_q1
 
-; 64x128 kernel addition vars
-;.set v_lane_k,          63
-;.set v_lane_l,          62
-;.set v_lane_m,          61
-;.set v_smem_store_a,    60
-;.set v_smem_store_b,    59
-;.set v_lane_lm,         58
-
 sgemm_128x64:
     .amd_kernel_code_t
         enable_sgpr_kernarg_segment_ptr = 1         ;
@@ -158,7 +225,7 @@ sgemm_128x64:
         enable_vgpr_workitem_id = 0
         is_ptr64 = 1
         float_mode = 192
-        workgroup_group_segment_byte_size = 16384
+        workgroup_group_segment_byte_size = 32768
         kernarg_segment_byte_size = k_end
         wavefront_sgpr_count = s_end+1+2*3          ; VCC, FLAT_SCRATCH and XNACK must be counted
         workitem_vgpr_count = v_end+1
@@ -309,7 +376,7 @@ L_sgemm64x128_k_loop_start:
         .s_fma4x8 v_c, v_a0, v_b0
         .cnt = .cnt + 1
 
-        .if .cnt == 1
+        .if .cnt == 5
             ds_read_b128 v[v_a0+0:v_a0+3], v[v_smem_load_a], offset:(.cnt+1)*0x100+0
             global_load_dwordx4 v[v_q0:v_q0+3], v[v_os_b:v_os_b+1], s[s_ptr_b:s_ptr_b+1]
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x1000+(.cnt+1)*0x200+0
@@ -361,7 +428,7 @@ L_sgemm64x128_k_loop_start:
         .s_fma4x8 v_c, v_a0, v_b0
         .cnt = .cnt + 1
 
-        .if .cnt == 1
+        .if .cnt == 5
             ds_read_b128 v[v_a0+0:v_a0+3], v[v_smem_load_a], offset:0x2000+(.cnt+1)*0x100+0
             global_load_dwordx4 v[v_q1:v_q1+3], v[v_os_b:v_os_b+1], s[s_ptr_b:s_ptr_b+1]
             ds_read_b128 v[v_b0+0:v_b0+3], v[v_smem_load_b], offset:0x3000+(.cnt+1)*0x200+0
