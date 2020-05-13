@@ -225,7 +225,7 @@ sgemm_128x64:
         enable_vgpr_workitem_id = 0
         is_ptr64 = 1
         float_mode = 192
-        workgroup_group_segment_byte_size = 32768
+        workgroup_group_segment_byte_size = 16384
         kernarg_segment_byte_size = k_end
         wavefront_sgpr_count = s_end+1+2*3          ; VCC, FLAT_SCRATCH and XNACK must be counted
         workitem_vgpr_count = v_end+1
