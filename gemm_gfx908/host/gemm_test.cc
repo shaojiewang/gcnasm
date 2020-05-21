@@ -15,10 +15,11 @@ using namespace std;
 #define HSACO "gemm_gcn.co"
 #define HSAASMCO "gemm_gcn_asm.co"
 #define HSA_KERNEL(a) "sgemm_128x"#a
+#define HSA_KERNEL_XDLOPS(a) "sgemm_xdlops_128x"#a
 
-#define SGEMM_M 4096
-#define SGEMM_N 4096
-#define SGEMM_K 4096
+#define SGEMM_M 128
+#define SGEMM_N 128
+#define SGEMM_K 128
 
 #define PER_PIXEL_CHECK 1
 #define ASSERT_ON_FAIL 1
@@ -128,7 +129,7 @@ void rand_vector_2d(float* v, int row, int col, int ld){
 int main(int argc, char *argv[])
 {
     // check input args
-    if (argc != 5)
+    if (argc != 6)
     {
         cout << "arg num wrong: " << argc << endl;
         return 0;
@@ -138,6 +139,7 @@ int main(int argc, char *argv[])
     uint32_t num_iter = atoi(argv[2]);
     uint32_t block_tile_a = atoi(argv[3]);
     uint32_t load_asm_co = atoi(argv[4]);
+    uint32_t use_xdlops = atoi(argv[5]);
 
     if ((block_tile_a != 64) && (block_tile_a != 128))
     {
@@ -156,7 +158,12 @@ int main(int argc, char *argv[])
     else
         HIP_CALL(hipModuleLoad(&kernel_module, HSACO));
     if (128 == block_tile_a)
-        HIP_CALL(hipModuleGetFunction(&device_func, kernel_module, HSA_KERNEL(128)));
+    {
+        if (use_xdlops)
+            HIP_CALL(hipModuleGetFunction(&device_func, kernel_module, HSA_KERNEL_XDLOPS(128)));
+        else
+            HIP_CALL(hipModuleGetFunction(&device_func, kernel_module, HSA_KERNEL(128)));
+    }
     else if (64 == block_tile_a)
         HIP_CALL(hipModuleGetFunction(&device_func, kernel_module, HSA_KERNEL(64)));
     else
@@ -179,7 +186,7 @@ int main(int argc, char *argv[])
     host_a = (float*)malloc(lda*k);
     host_b = (float*)malloc(ldb*k);
     host_c = (float*)malloc(ldc*n);
-    host_dbgmsg = (float*)malloc(256 * 4);
+    host_dbgmsg = (float*)malloc(128 * 128 * 4);
     rand_vector_2d(host_a, k, m, lda/sizeof(float));
     rand_vector_2d(host_b, k, n, ldb/sizeof(float));
 
@@ -245,7 +252,7 @@ int main(int argc, char *argv[])
     printf("m:%d,n:%d,k:%d,gflops:%.3f\r\n",m,n,k,gflops);
 
     // debug sec
-    HIP_CALL(hipMemcpy(host_dbgmsg, dev_c, 256 * 4, hipMemcpyDeviceToHost));
+    HIP_CALL(hipMemcpy(host_dbgmsg, dev_c, 128 * 128 * 4, hipMemcpyDeviceToHost));
     printf("var to monitor:[%f, %f, %f, %f]\r\n", host_dbgmsg[0], host_dbgmsg[1], host_dbgmsg[2], host_dbgmsg[3]);
     printf("var to monitor:[%d, %d, %d, %d]\r\n", ((int *)host_dbgmsg)[0], ((int *)host_dbgmsg)[1], 
                                                 ((int *)host_dbgmsg)[2], ((int *)host_dbgmsg)[3]);
@@ -257,6 +264,22 @@ int main(int argc, char *argv[])
         bool res = valid_vector( host_c, host_ch, m*n );
         printf("%s",res?"valid":"fail");
     }
+
+    {
+        int write_file = 1;
+        if (write_file)
+        {
+            FILE *f_out = fopen("out_128x128.txt", "wb");
+            if (nullptr == f_out)
+            {
+                printf("file not exit\r\n");
+                return 0;
+            }
+            fwrite(host_dbgmsg, 128 * 128 * 4, 1, f_out);
+            fclose(f_out);
+        }
+    }
+
     printf("\n");
 
 }
