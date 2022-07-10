@@ -11,7 +11,7 @@ k_CPP_SRC = "bench.cpp"
 k_CPP_TARGET = "bench.exe"
 k_ASM_SRC = "kernel.s"
 k_ASM_TARGET = k_HSACO
-k_ARCH = "gfx906"
+k_ARCH = "gfx1030"
 k_INST_LOOP = [256, 512, 768, 1024]
 USE_HIP_CLANG = True
 
@@ -58,6 +58,7 @@ class cpp_src_t:
         src = '''\
 #include <stdio.h>
 #include <hip/hip_runtime.h>
+#include <hip/hip_ext.h>
 #include <random>
 #include <iostream>
 
@@ -108,23 +109,36 @@ int main(int argc, char ** argv){{
                     &arg_size, HIP_LAUNCH_PARAM_END}};
 
     for(i=0;i<warm_ups;i++)
-        HIP_CALL(hipModuleLaunchKernel(kernel_func, gdx,1,1, bdx,1,1,  0, 0, NULL, (void**)&config ));
+    {{
+        hipEvent_t start;
+        hipEvent_t stop;
+        hipEventCreate(&start);
+        hipEventCreate(&stop);
 
-    hipEventCreate(&evt_00);
-    hipEventCreate(&evt_11);
+        HIP_CALL(hipHccModuleLaunchKernel(kernel_func, gdx*bdx,1,1, bdx,1,1,  0, 0, NULL, (void**)&config, start, stop));
 
-    hipCtxSynchronize();
-    hipEventRecord(evt_00, NULL);
+        hipEventDestroy(start);
+        hipEventDestroy(stop);
+    }}
+
+    float elapsed_ms = 0;
     for(i=0;i<total_loop;i++)
-        HIP_CALL(hipModuleLaunchKernel(kernel_func, gdx,1,1, bdx,1,1,  0, 0, NULL, (void**)&config ));
+    {{
+        hipEvent_t start;
+        hipEvent_t stop;
+        hipEventCreate(&start);
+        hipEventCreate(&stop);
 
-    float elapsed_ms;
-    hipEventRecord(evt_11, NULL);
-    hipEventSynchronize(evt_11);
-    hipCtxSynchronize();
-    hipEventElapsedTime(&elapsed_ms, evt_00, evt_11);
-    hipEventDestroy(evt_00);
-    hipEventDestroy(evt_11);
+        HIP_CALL(hipHccModuleLaunchKernel(kernel_func, gdx*bdx,1,1, bdx,1,1,  0, 0, NULL, (void**)&config, start, stop));
+        
+        float ms;
+        hipEventSynchronize(stop);
+        hipEventElapsedTime(&ms, start, stop);
+        hipEventDestroy(start);
+        hipEventDestroy(stop);
+        
+        elapsed_ms += ms;
+    }}
 
     float time_per_loop = elapsed_ms/total_loop;
     float tips = (double)inst_loop*inst_blocks*num_cu*bdx/time_per_loop/1e9;
@@ -242,6 +256,8 @@ L_kernel_start:
     .amdhsa_next_free_sgpr 32
     .amdhsa_ieee_mode 0
     .amdhsa_dx10_clamp 0
+    .amdhsa_wavefront_size32 1
+    .amdhsa_workgroup_processor_mode 1
 .end_amdhsa_kernel
 
 .amdgpu_metadata
@@ -256,7 +272,7 @@ amdhsa.kernels:
     .kernarg_segment_size: 12
     .group_segment_fixed_size: 0
     .private_segment_fixed_size: 0
-    .wavefront_size: 64
+    .wavefront_size: 32
     .reqd_workgroup_size : [256, 1, 1]
     .max_flat_workgroup_size: 256
     .args:
@@ -321,8 +337,8 @@ L_kernel_start:
         f.write(self.get_src())
 
 bench_inst_dict = [
-    ("v_add_co_u32",     "v[.itr], vcc, v[.itr+1], v[.itr+2]"),
-    ("v_addc_co_u32",    "v[.itr], vcc, v[.itr+1], v[.itr+2], vcc"),
+    #("v_add_co_u32",     "v[.itr], vcc, v[.itr+1], v[.itr+2]"),
+    #("v_addc_co_u32",    "v[.itr], vcc, v[.itr+1], v[.itr+2], vcc"),
     ("v_or_b32",         "v[.itr], v[.itr+1], v[.itr+2]"),
     ("v_lshl_or_b32",    "v[.itr], v[.itr+1], v[.itr+2], v[.itr+3]"),
     ("v_lshlrev_b64",    "v[.itr:.itr+1], 8, v[.itr+2:.itr+3]"),
@@ -338,9 +354,9 @@ bench_inst_dict = [
     ("v_swap_b32",       "v[.itr], v[.itr+1]"),
 
     ("v_fmac_f32",      "v[.itr], v[.itr+1], v[.itr+2]"),
-    ("v_mac_f32",       "v[.itr], v[.itr+1], v[.itr+2]"),
-    ("v_mad_f32",       "v[.itr], v[.itr+1], v[.itr+2], v[.itr+3]"),
-    ("v_mac_f16",       "v[.itr], v[.itr+1], v[.itr+2]"),
+    #("v_mac_f32",       "v[.itr], v[.itr+1], v[.itr+2]"),
+    #("v_mad_f32",       "v[.itr], v[.itr+1], v[.itr+2], v[.itr+3]"),
+    #("v_mac_f16",       "v[.itr], v[.itr+1], v[.itr+2]"),
     ("v_pk_mul_f16",    "v[.itr], v[.itr+1], v[.itr+2], op_sel_hi:[1,1]"),
     ("v_pk_mul_f16",    "v[.itr], v[.itr+1], v[.itr+2]"),
     ("v_sin_f32",       "v[.itr], v[.itr+1]"),
