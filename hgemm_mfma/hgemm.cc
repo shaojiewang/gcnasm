@@ -50,15 +50,14 @@ static inline bool valid_vector( const float* ref, const float16* pred, int n, d
     ;
 }
 
-void rand_vector_2d(float* v, int row, int col, int ld){
+void rand_vector_2d(float* v, int row, int col, int ld, float min_v = 0, float max_v = 1){
     int r,c;
     static int flag = 0;
     if(!flag){ srand(time(NULL)); flag = 1; }
     for(r=0;r<row;r++){
         for(c=0;c<col;c++){
-            v[r*ld+c] = ((float)(rand() % 100)) / 100.0f;
-            // v[r*ld+c] = ((float)(rand() % 6)) - 3;
-            // v[r*ld+c] = 1;
+            float tmp = float(std::rand()) / float(RAND_MAX);
+            v[r*ld+c] = static_cast<float>(min_v + tmp * (max_v - min_v));
         }
     }
 }
@@ -99,7 +98,7 @@ void gemm_rcr(
 
 int main(int argc, char ** argv)
 {
-    int validation = 1;
+    int validation = 0;
     int m = 3840;
     int n = 4096;
     int k = 4096;
@@ -128,8 +127,8 @@ int main(int argc, char ** argv)
     host_a = (float*)malloc(lda*m*sizeof(float));
     host_b = (float*)malloc(ldb*n*sizeof(float));
     host_c = (float*)malloc(ldc*m*sizeof(float));
-    rand_vector_2d(host_a, m, k, lda);
-    rand_vector_2d(host_b, n, k, ldb);
+    rand_vector_2d(host_a, m, k, lda, 0.0, 1.0);
+    rand_vector_2d(host_b, n, k, ldb, -0.5, 0.5);
     //fp16 on host
     fp16_a = (float16*)malloc(lda*m*sizeof(float16));
     fp16_b = (float16*)malloc(ldb*n*sizeof(float16));
@@ -147,19 +146,19 @@ int main(int argc, char ** argv)
 
     printf("m:%d,n:%d,k:%d,lda:%d,ldb:%d,ldc:%d",  m, n, k, lda, ldb, ldc); fflush(stdout);
 
-    auto invoker = gemm_invoker<kernel>{};
+    auto invoker = gemm_invoker<kernel_t>{};
     auto karg = invoker.make_karg(dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
     bool applicable = invoker.is_applicable(karg);
     float ms = 0;
     if(applicable) ms = invoker.bench(karg);
 
     float gflops = applicable ? (float)2*m*n*k/ms/(1e9) : 0;
-    printf(" ms:%f, tflops:%.3f ",ms,gflops); fflush(stdout);
+    printf(" ms:%f, tflops:%.3f",ms,gflops); fflush(stdout);
     if(!applicable) {
-        printf(" not applicable"); fflush(stdout);
+        printf(", not applicable"); fflush(stdout);
     }
 
-    if(validation){
+    if(applicable && validation){
         gemm_rcr(host_c, host_a, host_b, m,n,k,lda,ldb,ldc);
         HIP_CALL(hipMemcpy(fp16_c, dev_c, ldc*m*sizeof(float16), hipMemcpyDeviceToHost));
         bool res = valid_vector( host_c, fp16_c, m*n );
