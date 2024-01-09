@@ -18,6 +18,9 @@ memcpy_x4_kernel_gfx1030:
 .set v_offset,          16
 .set v_tmp,             32
 
+.set num_threads,        256
+
+
     ; http://www.hsafoundation.com/html/Content/Runtime/Topics/02_Core/hsa_kernel_dispatch_packet_t.htm
     ;s_load_dword s[s_gdx],                  s[s_dptr:s_dptr+1], 12
     ;s_waitcnt           lgkmcnt(0)
@@ -29,19 +32,19 @@ memcpy_x4_kernel_gfx1030:
     s_load_dword s[s_loops_per_block],          s[s_karg:s_karg+1],     16
     s_load_dword s[s_gdx],                      s[s_karg:s_karg+1],     20
 
-    s_mul_i32 s[s_tmp+1], s[s_bx], 256*4    ; blockIdx*blockDim*4
+    s_mul_i32 s[s_tmp+1], s[s_bx], num_threads*4    ; blockIdx*blockDim*4
     v_lshlrev_b32 v[v_tmp], 2, v0           ; threadIdx*4
     v_add_u32 v[v_offset+0], s[s_tmp+1], v[v_tmp]    ; (blockIdx*blockDim + threadIdx)*4
     v_lshlrev_b32 v[v_offset+0], 2, v[v_offset+0]    
 
     s_waitcnt           lgkmcnt(0)
 
-    s_mul_i32 s[s_tmp],  s[s_gdx],  256*4*4   ; gridDim*blockDim*float4
+    s_mul_i32 s[s_tmp],  s[s_gdx],  num_threads*4*4   ; gridDim*blockDim*float4
     v_add_u32 v[v_offset+1],    s[s_tmp],   v[v_offset+0]
     v_add_u32 v[v_offset+2],    s[s_tmp],   v[v_offset+1]
     v_add_u32 v[v_offset+3],    s[s_tmp],   v[v_offset+2]
 
-    s_mul_i32 s[s_tmp],  s[s_gdx],  256*4   ; gridDim*blockDim*4
+    s_mul_i32 s[s_tmp],  s[s_gdx],  num_threads*4   ; gridDim*blockDim*4
     s_lshl_b32 s[s_stride_block],   s[s_tmp],   4   ; unroll 16, gridDim*blockDim*4*workload
 
 label_memcopy_start:

@@ -86,15 +86,18 @@ int main(int argc, char ** argv){
         if(gcn_arch >= 1000)
             num_cu *= 2;
     }
+    
+    num_cu = 40;
+    int thread_block_size = 256;
 
     int total_loop=4;
     int warm_ups = 2;
     int i;
-    int bdx = 256;
+    int bdx = thread_block_size;
     int gdx = num_cu;
     float * host_in, * host_out, *dev_in, *dev_out;
-    int loops_per_block = 512;
-    int total_floats = num_cu * 256 * 16 * loops_per_block;
+    int loops_per_block = 256;
+    int total_floats = num_cu * thread_block_size * 16 * loops_per_block;
 
     host_in   = new float[total_floats];
     host_out  = new float[total_floats];

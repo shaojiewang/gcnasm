@@ -1,7 +1,7 @@
 #!/bin/sh
 
-KSRC=memcpy_kernel_gfx90a.s
-KOUT=memcpy_kernel_gfx90a.hsaco
+KSRC=memcpy_x4_kernel_gfx90a.s
+KOUT=memcpy_x4_kernel_gfx90a.hsaco
 SRC=main.cpp
 TARGET=out.exe
 
