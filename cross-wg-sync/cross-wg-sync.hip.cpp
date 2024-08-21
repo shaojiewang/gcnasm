@@ -15,8 +15,8 @@
 #endif
 
 #define WARP_SIZE 64  // need runtime detecting for correct value
-#define BLOCK_SIZE 64 
-#define GRID_SIZE (104 * 2)
+#define BLOCK_SIZE 256
+#define GRID_SIZE 3000
 
 #define PER_PIXEL_CHECK
 static inline bool valid_vector( const float* ref, const float * pred, int n, double nrms = 1e-3 )
@@ -57,59 +57,31 @@ static inline bool valid_vector( const float* ref, const float * pred, int n, do
     ;
 }
 
-
-
-typedef int32_t int32x4_t __attribute__((ext_vector_type(4)));
-#define AMDGCN_BUFFER_RES_3 0x00027000 // for gfx90a
-
-template <typename T>
-union amdgcn_buffer_resource
+// offset is per-thread offset(threadIdx.x/y/z dependent), not per-wave offset(threadIdx.x/y/z independent)
+__device__ float atomic_load_fp32(float * addr, uint32_t offset = 0)
 {
-    // https://rocm-documentation.readthedocs.io/en/latest/GCN_ISA_Manuals/testdocbook.html#vector-memory-buffer-instructions
-    int32x4_t content;
-    struct
-    {
-        T* address;
-        int32_t range;
-        int32_t config;
-    };
-};
-
-template <typename T>
-__device__ int32x4_t amdgcn_make_buffer_resource(const T* addr)
-{
-    amdgcn_buffer_resource<T> buffer_resource;
-    buffer_resource.address = const_cast<T*>(addr);
-    buffer_resource.range   = 0xffffffff;
-    buffer_resource.config  = AMDGCN_BUFFER_RES_3; // for gfx9
-
-    return buffer_resource.content;
+    return __builtin_bit_cast(float, __atomic_load_n(reinterpret_cast<uint32_t*>(addr + offset), __ATOMIC_RELAXED));
 }
 
-// slc_glc: 0-no, 1-glc, 2-slc, 3-glc+slc
-#define AMDGCN_BUFFER_DEFAULT   0
-#define AMDGCN_BUFFER_GLC       1
-#define AMDGCN_BUFFER_SLC       2
-#define AMDGCN_BUFFER_GLC_SLC   3
-
-__device__ float
-llvm_amdgcn_raw_buffer_load_fp32(int32x4_t srsrc,
-                                 int32_t voffset,
-                                 int32_t soffset,
-                                 int32_t glc_slc) __asm("llvm.amdgcn.raw.buffer.load.f32");
-
-__device__ uint32_t
-llvm_amdgcn_raw_buffer_load_u32(int32x4_t srsrc,
-                                 int32_t voffset,
-                                 int32_t soffset,
-                                 int32_t glc_slc) __asm("llvm.amdgcn.raw.buffer.load.u32");
-
-__device__ void
-llvm_amdgcn_raw_buffer_store_fp32(float vdata,
-                                  int32x4_t rsrc,
-                                  int32_t voffset,
-                                  int32_t soffset,
-                                  int32_t glc_slc) __asm("llvm.amdgcn.raw.buffer.store.f32");
+// offset is per-thread offset(threadIdx.x/y/z dependent), not per-wave offset(threadIdx.x/y/z independent)
+__device__ void atomic_store_fp32(float * addr, float value, uint32_t offset = 0)
+{
+    // __hip_atomic_store() does not work
+    // currently intrinsic doesn't produce sc1 bit for gfx94*
+#if (defined(__gfx908__) || defined(__gfx90a__))
+    asm volatile("global_store_dword %0, %1, %2 glc\n"
+                "s_waitcnt vmcnt(0)"
+                :
+                : "v"(static_cast<uint32_t>(offset * sizeof(uint32_t))), "v"(value), "s"(addr)
+                : "memory");
+#elif (defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__))
+    asm volatile("global_store_dword %0, %1, %2 sc0 sc1\n"
+                "s_waitcnt vmcnt(0)"
+                :
+                : "v"(static_cast<uint32_t>(offset * sizeof(uint32_t))), "v"(value), "s"(addr)
+                : "memory");
+#endif
+}
 
 // always use tid = 0 to wait
 // assume initial value is zero
@@ -118,64 +90,50 @@ struct workgroup_barrier {
         base_ptr(ptr)
     {}
 
-    __device__ uint32_t ld(uint32_t offset)
+    __device__ uint32_t ld(uint32_t offset  = 0)
     {
-#if 0
-        float d = llvm_amdgcn_raw_buffer_load_fp32(
-                        amdgcn_make_buffer_resource(base_ptr),
-                        0,
-                        offset,
-                        AMDGCN_BUFFER_GLC);
-        union cvt {
-            float f32;
-            uint32_t u32;
-        };
-        cvt x;
-        x.f32 = d;
-        return x.u32;
-#endif
         return __atomic_load_n(base_ptr + offset, __ATOMIC_RELAXED);
     }
 
-    __device__ void wait_eq(uint32_t offset, uint32_t value)
+    __device__ void wait_eq(uint32_t value, uint32_t offset = 0)
     {
         if(threadIdx.x == 0){
             while(ld(offset) != value){}
         }
-        __syncthreads();
+        __builtin_amdgcn_s_barrier();
     }
 
-    __device__ void wait_lt(uint32_t offset, uint32_t value)
+    __device__ void wait_lt(uint32_t value, uint32_t offset = 0)
     {
         if(threadIdx.x == 0){
             while(ld(offset) < value){}
         }
-        __syncthreads();
+        __builtin_amdgcn_s_barrier();
     }
 
-    __device__ void wait_set(uint32_t offset, uint32_t compare, uint32_t value)
+    __device__ void wait_set(uint32_t compare, uint32_t value, uint32_t offset = 0)
     {
         if(threadIdx.x == 0){
-            while(atomicCAS(base_ptr, compare, value) != compare){}
+            while(atomicCAS_system(base_ptr + offset, compare, value) != compare){}
         }
-        __syncthreads();
+        __builtin_amdgcn_s_barrier();
     }
 
     // enter critical zoon, assume buffer is zero when launch kernel
-    __device__ void aquire(uint32_t offset)
+    __device__ void aquire(uint32_t offset = 0)
     {
-        wait_set(offset, 0, 1);
+        wait_set(0, 1, offset);
     }
 
     // exit critical zoon, assume buffer is zero when launch kernel
-    __device__ void release(uint32_t offset)
+    __device__ void release(uint32_t offset = 0)
     {
-        wait_set(offset, 1, 0);
+        wait_set(1, 0, offset);
     }
 
-    __device__ void inc(uint32_t offset)
+    __device__ void inc(uint32_t offset = 0)
     {
-        __syncthreads();
+        __builtin_amdgcn_s_barrier();
         if(threadIdx.x == 0){
             atomicAdd(base_ptr + offset, 1);
         }
@@ -186,26 +144,53 @@ struct workgroup_barrier {
 
 /*
 * simple example to reduce element between workgroups.
-* number of groups equal to GRID_SIZE
-* input GRID_SIZE * 256, output 256
+* input(2d) GRID_SIZE * BLOCK_SIZE reduce to output(1d) BLOCK_SIZE
+* 
+* each thread within a WG load a pixel from input row(where the row-id = blockIdx.x)
+* , and atomically load a pixel from output.
+* then reduce(add) the result, atomically store the result to output row.
+*
+* we can just use atomicAdd() to achieve this reduction, but here we use this
+* load->modify->store flow deliberately, which introduce the necessity of workgroup_barrier
+* data structure implemented for the cross-wg sync
+* 
+* this reduction stage can be serialized between WGs, or out-of-order. We test both.
+* (they should be the same except some numeric difference)
+*
+* besides, we use one extra wg to copy the final reduced value from p_out to p_out_aux
+* if everything is OK, p_out and p_out_aux should be identical
+* for simplicity, only test it if serialized_reduce==true, since p_cnt now have enough counter
+* to indicate the finish of first period (if ooo reduce, need one extra buffer to serve as counter)
 * 
 */
-__global__ void simple_workgroup_reduce(uint32_t * p_cnt, float* p_in, float * p_out)
+template<bool serialized_reduce = true>
+__global__ void simple_workgroup_reduce(uint32_t * p_cnt, float* p_in, float * p_out, float * p_out_aux)
 {
     workgroup_barrier barrier(p_cnt);
-    barrier.wait_eq(0, blockIdx.x);     // serialize sync
-    //barrier.aquire(0);      // out-of-order sync
+    if constexpr (serialized_reduce) {
+        if (blockIdx.x == (gridDim.x - 1)) {
+            barrier.wait_eq(gridDim.x - 1);
+            float o_data = atomic_load_fp32(p_out, threadIdx.x);  // atomic load
+            *(p_out_aux + threadIdx.x) = o_data;  // not need to use atomic store
+            return;
+        }
+    }
+    if constexpr (serialized_reduce)
+        barrier.wait_eq(blockIdx.x);
+    else
+        barrier.aquire();
 
-    int32x4_t i_res = amdgcn_make_buffer_resource<float>(p_in + blockIdx.x * BLOCK_SIZE);
-    int32x4_t o_res = amdgcn_make_buffer_resource<float>(p_out);
-
-    float o_data = llvm_amdgcn_raw_buffer_load_fp32(o_res, threadIdx.x * sizeof(float), 0, AMDGCN_BUFFER_GLC);
-    float i_data = llvm_amdgcn_raw_buffer_load_fp32(i_res, threadIdx.x * sizeof(float), 0, AMDGCN_BUFFER_DEFAULT);
+    // critical area start
+    float o_data = atomic_load_fp32(p_out, threadIdx.x);  // atomic load
+    float i_data = *(p_in + blockIdx.x * blockDim.x + threadIdx.x); // no need to use atomic
     float result = i_data + o_data;
-    llvm_amdgcn_raw_buffer_store_fp32(result, o_res,  threadIdx.x * sizeof(float), 0, AMDGCN_BUFFER_GLC);
+    atomic_store_fp32(p_out, result, threadIdx.x);
+    // critical area end
 
-    barrier.inc(0);     // serialize sync
-    //barrier.release(0); // out-of-order sync
+    if constexpr (serialized_reduce)
+        barrier.inc();
+    else
+        barrier.release();
 }
 
 
@@ -229,8 +214,11 @@ void rand_vector(float* v, int num){
     }
 }
 
-int main(int argc, char ** argv)
+template<bool serialized_reduce = true>
+void invoke(int argc, char ** argv)
 {
+    // use 1 can also be correct, here we just hope this buffer to be cacheline aligned
+    constexpr int cacheline_size_in_dword = 32;
     int reduce_groups = GRID_SIZE;
     if(argc >= 2) {
         reduce_groups = std::atoi(argv[1]);
@@ -238,6 +226,7 @@ int main(int argc, char ** argv)
     uint32_t * dev_cnt;
     float * dev_in;
     float * dev_out;
+    float * dev_out_aux;
 
     int i_sz = BLOCK_SIZE * reduce_groups;
     int o_sz = BLOCK_SIZE;
@@ -245,12 +234,14 @@ int main(int argc, char ** argv)
     float * host_in = new float[i_sz];
     float * host_out = new float[o_sz];
     float * host_out_dev = new float[o_sz];
+    float * host_out_aux_dev = new float[o_sz];
 
-    HIP_CALL(hipMalloc(&dev_cnt,  1 * sizeof(uint32_t)));
+    HIP_CALL(hipMalloc(&dev_cnt,  cacheline_size_in_dword * sizeof(uint32_t)));
     HIP_CALL(hipMalloc(&dev_in,  i_sz * sizeof(float)));
     HIP_CALL(hipMalloc(&dev_out,  o_sz * sizeof(float)));
+    HIP_CALL(hipMalloc(&dev_out_aux,  o_sz * sizeof(float)));
 
-    hipMemset(dev_cnt, 0, 1 * sizeof(uint32_t));
+    hipMemset(dev_cnt, 0, cacheline_size_in_dword * sizeof(uint32_t));
     hipMemset(dev_out, 0, o_sz * sizeof(float));
 
     rand_vector(host_in, i_sz);
@@ -258,9 +249,39 @@ int main(int argc, char ** argv)
 
     host_workgroup_reduce(host_in, host_out, reduce_groups, BLOCK_SIZE);
 
-    simple_workgroup_reduce<<<dim3(reduce_groups), dim3(BLOCK_SIZE), 0, 0>>>(dev_cnt, dev_in, dev_out);
+    constexpr int aux_wg = serialized_reduce ? 1 : 0;
+    simple_workgroup_reduce<serialized_reduce><<<dim3(reduce_groups + aux_wg), dim3(BLOCK_SIZE), 0, 0>>>
+        (dev_cnt, dev_in, dev_out, dev_out_aux);
     HIP_CALL(hipMemcpy(host_out_dev, dev_out,  o_sz * sizeof(float), hipMemcpyDeviceToHost));
+    HIP_CALL(hipMemcpy(host_out_aux_dev, dev_out_aux,  o_sz * sizeof(float), hipMemcpyDeviceToHost));
 
     bool valid = valid_vector(host_out, host_out_dev, o_sz);
-    printf("valid:%s\n", valid?"y":"n");
+    printf("[%s] %d groups, valid:%s", serialized_reduce? "serialized_reduce" : "outoforder_reduce",
+                              reduce_groups,  valid?"y":"n");
+    if constexpr(serialized_reduce) {
+        bool valid_aux = true;
+        for(auto i =0; i < o_sz; i++) {
+            uint32_t oo = __builtin_bit_cast(uint32_t, host_out_dev[i]);
+            uint32_t oa = __builtin_bit_cast(uint32_t, host_out_aux_dev[i]);
+            if(oo != oa) {
+                valid_aux = false;
+            }
+        }
+        printf(", aux:%s", valid_aux?"y":"n");
+    }
+    printf("\n");
+    free(host_in);
+    free(host_out);
+    free(host_out_dev);
+    free(host_out_aux_dev);
+    hipFree(dev_cnt);
+    hipFree(dev_in);
+    hipFree(dev_out);
+    hipFree(dev_out_aux);
+}
+
+int main(int argc, char ** argv)
+{
+    invoke<true>(argc, argv);
+    invoke<false>(argc, argv);
 }

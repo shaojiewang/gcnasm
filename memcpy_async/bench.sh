@@ -1,5 +1,5 @@
 #!/bin/sh
-EXE=memcpy_kernel.exe
+EXE=build/memcpy_async.exe
 export HIP_FORCE_DEV_KERNARG=1
 
 if [ $# -ge 1 ] ; then
