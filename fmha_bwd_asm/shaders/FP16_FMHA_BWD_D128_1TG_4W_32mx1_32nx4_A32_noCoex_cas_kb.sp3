@@ -56,6 +56,7 @@ var H_DIM   = 128  //HEAD DIM
 var H_DIM_LOG2 = 7
 var SUB_QO  = 32
 var SUB_KV  = 128
+var SUB_KV_LOG2  = 7
 
 var Bpp  = 2 //bytes per point
 var PF_Bs = 2 //prefetch blk of QOLseD
@@ -195,14 +196,24 @@ var s_scalar_1 = s67
 var s_scl_log2e   = s68
 var s_scl_log2e_1 = s69
 
-var s_QdO_inc_Bytes = s70
-var s_LseD_inc_DW = s71
+var s_mask0 = s70
+var s_mask1 = s71
 
-var s_Seqs    = s72
-var s_dQ_base = s73
+var s_mask_kb_loop_idx = s72
+var s_mask_kb_loop_cnt = s73
 
-var _s_Lse_lds_wr_base_m0 = 74
-var _s_Q_buf_save = _s_Lse_lds_wr_base_m0 + 2
+var s_QdO_inc_Bytes = s74
+var s_LseD_inc_DW = s75
+
+var s_mask_loop_idx = s76
+
+var s_Seqs    = s78
+var s_dQ_base = s79
+
+var _s_Lse_lds_wr_base_m0 = 80
+var _s_dQ_buf_save = _s_Lse_lds_wr_base_m0 + 2
+
+var _s_Q_buf_save = _s_dQ_buf_save + 2
 var _s_K_buf_save = _s_Q_buf_save + 2
 var _s_V_buf_save = _s_K_buf_save + 2
 var _s_dO_buf_save =  _s_V_buf_save + 2
@@ -239,6 +250,7 @@ var _v_dKV_lds_rd = _v_KV_lds_Trd + 1
 var _v_dKV_lds_wr = _v_dKV_lds_rd + 1
 
 var _v_tmp = 28
+var _v_neg_inf = 31
 
 var _v_Q_fch = 32
 var _v_Q_fch_reg_size = QdO_lu_ld_reg_size*PF_Bs //16
@@ -315,6 +327,9 @@ label label_wave01_core_loop
 label label_wave23_core_loop
 label label_main_loops_exit
 label label_aligned_exit
+label label_mask_kb_loop
+label label_mask_exit[4]
+label label_mask_all[4]
 ///////////////////
 
 ///////////////////////////////////////////////
@@ -750,6 +765,18 @@ function blk_32x128_cvt(v_dst, v_src, s, n)
        end
     end
 end
+
+//////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////Q mem load addr////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////
+function Q_offset_gen
+  s_mul_i32        s_tmp0,      SUB_KV,       s_tg_idx
+  s_mul_i32        s_tmp0,      s_Seqs,       s_tmp0
+  s_add_u32        s_Q_base,    s_tmp0,       s_Q_base
+
+  s_mul_i32        s_loop_idx,  SUB_KV,       s_tg_idx
+end
+
 //////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////LseD mem load//////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -782,7 +809,7 @@ end
 function LseD_mem_load_m0_va_upd(fch_idx)
     if fch_idx < PF_Bs
         s_mov_b32   m0, s_regs(_s_Lse_lds_wr_base_m0, fch_idx)
-        v_add_u32   v_regs(_v_LseD_addr,0),  s_LseD_inc_DW, v_regs(_v_LseD_addr,0)
+        v_add_u32   v_regs(_v_LseD_addr,0), s_LseD_inc_DW, v_regs(_v_LseD_addr,0)
     end
 end
 ////////////////////////////////LseD lds load///////////////////////////////////////////////////////////
@@ -1761,6 +1788,46 @@ function cl_gemm0(cl_p, pi)
 end
 
 ////////////////////////////////////////////
+////////////////Casual Mask/////////////////
+////////////////////////////////////////////
+function cl_causal(cl_p, pi)
+   //wave:  0    1    2    3
+   //iter0: msk, 0,   0,   0
+   //iter1: 1,   msk, 0,   0
+   //iter2: 1,   1,   msk, 0
+   //iter3: 1,   1,   1,   msk
+ 
+   s_cmp_le_i32      s_mask_loop_idx,    s_wave_id
+   s_nop 0
+   s_cbranch_scc0    label_mask_exit[cl_p*2+pi]
+      s_cmp_lt_i32      s_mask_loop_idx,    s_wave_id
+      s_cbranch_scc1    label_mask_all[cl_p*2+pi]
+        s_mov_b32 s_tmp0, 0xfffffffe
+        s_mov_b32 s_tmp1, 0xffffffe0
+
+        for var i = 0; i < 16; i++
+           v_cndmask_b32    v_regs(_v_SPdSt, i),  v_regs(_v_SPdSt, i), v_regs(_v_neg_inf,0), s_tmp0
+           if i%4 != 3
+             s_lshl_b32       s_tmp0,       s_tmp0,        1
+             s_lshl_b32       s_tmp1,       s_tmp1,        1
+           else
+             s_lshl_b32       s_tmp0,       s_tmp0,        5
+             s_lshl_b32       s_tmp1,       s_tmp1,        5
+           end
+        end
+        s_branch label_mask_exit[cl_p*2+pi]
+
+      label_mask_all[cl_p*2+pi]:
+        for var i = 0; i < 16; i++
+           v_mov_b32 v_regs(_v_SPdSt, i), v_regs(_v_neg_inf,0)
+        end
+
+label_mask_exit[cl_p*2+pi]:
+   s_addk_i32        s_mask_loop_idx,    1
+
+end
+
+////////////////////////////////////////////
 //////GEMM1: dP=dO(32*128)*V(128*32)////////
 ////////////////////////////////////////////
 function cl_gemm1(cl_p, pi)
@@ -2142,6 +2209,7 @@ function core_loop(cl_p)
      dQ_ms_idx = 0
 
      cl_gemm0(cl_p, pi)
+     cl_causal(cl_p,pi)
      cl_gemm1(cl_p, pi)
      cl_gemm2(cl_p, pi)
      cl_gemm3(cl_p, pi)
@@ -2279,6 +2347,7 @@ shader main
     s_mov_b32      s_regs(_s_K_buf_save, k),  s_regs(_s_K_buf, k) 
     s_mov_b32      s_regs(_s_V_buf_save, k),  s_regs(_s_V_buf, k) 
     s_mov_b32      s_regs(_s_dO_buf_save, k), s_regs(_s_dO_buf, k) 
+    s_mov_b32      s_regs(_s_dQ_buf_save, k), s_regs(_s_dQ_buf, k)
   end
 ////////////////////////////////////////////////////////////////
 /////////parameter process end///////////////////////////////////
@@ -2325,8 +2394,6 @@ shader main
   v_mov_b32             v_regs(_v_tmp, 0),   s_scalar
   v_mul_f32             v_regs(_v_tmp, 0),   s_log2e, v_regs(_v_tmp, 0)
 
-  s_mov_b32             s_dQ_inc_Bytes,      0
-
   s_mov_b32             s_loop_cnt,          s_seq_len
   s_mov_b32             s_loop_idx,          0
 
@@ -2357,15 +2424,28 @@ shader main
 
   s_add_u32        s_regs(_s_Lse_lds_wr_base_m0, 0),      LDS_LseD_BASE,        s_tmp0
   s_add_u32        s_regs(_s_Lse_lds_wr_base_m0, 1),      LseD_lds_size,        s_regs(_s_Lse_lds_wr_base_m0, 0)
-  s_mov_b32        m0, s_regs(_s_Lse_lds_wr_base_m0, 0)
-
   s_mov_b32        s_32x128_Bytes, 32*128*4
 
-  s_mov_b32        s_scalar_1,    s_scalar
-  s_mov_b32        s_scl_log2e_1, s_scl_log2e
+  s_mov_b32             s_scalar_1,      s_scalar
+  s_mov_b32             s_scl_log2e_1,   s_scl_log2e
+ 
+  s_mov_b32        s_mask_kb_loop_idx,     0
+  s_mov_b32        s_mask_kb_loop_cnt,     1
+  s_lshr_b32       s_tmp0,    s_seq_len,  SUB_KV_LOG2
+  s_sub_i32        s_tmp0,    s_tmp0,     1
+  s_lshl_b32       s_tmp1,    s_tg_idx,   1
+  s_cmp_eq_i32     s_tmp1,    s_tmp0
+  s_cselect_b32    s_mask_kb_loop_cnt, s_mask_kb_loop_cnt, 2
+
+label_mask_kb_loop:
+
+  s_mov_b32        m0,              s_regs(_s_Lse_lds_wr_base_m0, 0)
+  s_mov_b32        s_dQ_inc_Bytes,  0
+
+  v_mov_b32        v_regs(_v_neg_inf,0),     0xff800000
+  s_mov_b32        s_mask_loop_idx,          0
 
   s_mul_i32        s_QdO_inc_Bytes,  SUB_QO,  s_Seqs
-  //s_mov_b32        s_QdO_inc_Bytes,  lu_size_in_DW*4
   s_mov_b32        s_LseD_inc_DW, SUB_QO
   /////////////////////////QKVdO block base address//////////////////////////////////////////////
   s_mul_i32        s_tmp0,      s_tg_idx,     s_Ts
@@ -2375,10 +2455,11 @@ shader main
   s_add_u32        s_KV_base,   s_KV_base,    s_tmp2
  
   s_add_u32        s_Q_base,     s_tmp1,       s_tmp2
-  s_mov_b32        s_dO_base,    s_Q_base
+  Q_offset_gen()
 
+  s_mov_b32        s_dO_base,    s_Q_base
   //LseD always in bhs layout and 32bit per point. 
-  // addr = batch_idx * s_BAs/h_dim * 2 (s_BAs measured in f16) + head_idx * seq_len * 4
+  // addr = batch_idx * s_BAs/h_dim * 2 (s_BAs measured in f16) + head_idx * seq_len * 4 + seq_len_idx * 4
  
   s_mul_i32        s_tmp2,      s_tg_idz,     s_BAs
   s_lshr_b32       s_tmp2,      s_tmp2,       H_DIM_LOG2-1
@@ -2386,6 +2467,9 @@ shader main
   s_mul_i32        s_tmp1,      s_tg_idy,     s_seq_len
   s_mul_i32        s_tmp1,      4,            s_tmp1
   s_add_u32        s_LseD_base, s_tmp1,       s_tmp2
+
+  s_mul_i32        s_tmp0,      SUB_KV*4,     s_tg_idx
+  s_add_u32        s_LseD_base, s_tmp0,       s_LseD_base
 
   //////mem addr generate///////
   blk_32x128k_mem_load_addr_gen(_v_blk_mem_rd)
@@ -2414,12 +2498,14 @@ shader main
 
   dQ_32x128_mem_store_addr_gen(_v_dQ_addr)
   //dQ always in bhsd layout and 32bit per point. 
-  // addr = batch_idx * s_BAs * 2 (s_BAs measured in f16) + head_idx * seq_len * head-dim * 4
+  // addr = batch_idx * s_BAs * 2 (s_BAs measured in f16) + head_idx * seq_len * head-dim * 4 + seq_len_idx * head-dim * 4
  
   s_mul_i32        s_tmp2,      s_tg_idz,     s_BAs
   s_mul_i32        s_tmp2,      2,            s_tmp2
 
   s_mul_i32        s_tmp1,      s_tg_idy,     s_seq_len
+  s_mul_i32        s_tmp0,      SUB_KV,       s_tg_idx
+  s_add_u32        s_tmp1,      s_tmp0,       s_tmp1
   s_lshl_b32       s_tmp1,      s_tmp1,       2 + H_DIM_LOG2
 
   s_add_u32        s_dQ_base,   s_tmp1,       s_tmp2
@@ -2608,9 +2694,18 @@ label_main_loops_exit:
   s_waitcnt lgkmcnt(0)
   dV_mem_store( 0, dKV_32x128_mem_wr_insts)
 
-code_exit:
-
   s_waitcnt        0
-  s_endpgm             
 
+  s_mov_b32        s_regs(_s_dQ_buf, 0), s_regs(_s_dQ_buf_save, 0)
+  s_mov_b32        s_regs(_s_dQ_buf, 1), s_regs(_s_dQ_buf_save, 1)
+
+  s_lshr_b32       s_tmp0,    s_seq_len,  SUB_KV_LOG2
+  s_sub_i32        s_tmp0,    s_tmp0,     1
+  s_sub_i32        s_tg_idx,  s_tmp0,     s_tg_idx
+
+  s_addk_i32        s_mask_kb_loop_idx,  1
+  s_cmp_lt_i32      s_mask_kb_loop_idx,  s_mask_kb_loop_cnt
+  s_cbranch_scc1    label_mask_kb_loop
+
+  s_endpgm             
 end

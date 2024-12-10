@@ -202,7 +202,9 @@ var s_Seqs    = s72
 var s_dQ_base = s73
 
 var _s_Lse_lds_wr_base_m0 = 74
-var _s_Q_buf_save = _s_Lse_lds_wr_base_m0 + 2
+var _s_bf16_cvt = _s_Lse_lds_wr_base_m0 + 2
+
+var _s_Q_buf_save = _s_bf16_cvt + 2
 var _s_K_buf_save = _s_Q_buf_save + 2
 var _s_V_buf_save = _s_K_buf_save + 2
 var _s_dO_buf_save =  _s_V_buf_save + 2
@@ -279,7 +281,10 @@ var _v_dQ_reg_size = QdO_lu_ld_reg_size*2 //16
 var _v_dQ_save = _v_dQ + _v_dQ_reg_size //[236] ---not used
 var _v_dQ_save_reg_size = QdO_lu_ld_reg_size //8
 
-var _v_arc_end = _v_dQ + _v_dQ_reg_size - 1
+var _v_bf16_cvt = _v_dQ + _v_dQ_reg_size
+var _v_bf16_cvt_reg_size = 4
+
+var _v_arc_end = _v_bf16_cvt + _v_bf16_cvt_reg_size - 1
 
 //reuse at the end
 var _v_dKs = 64
@@ -746,7 +751,21 @@ function blk_32x128_cvt(v_dst, v_src, s, n)
        
        for var i=0; i < inst_cnt; i++
            var i_idx = s+i
-           v_cvt_pkrtz_f16_f32   v_regs(v_dst, i_idx),      v_regs(v_src, 2*i_idx),    v_regs(v_src, 2*i_idx+1)
+           v_cmp_u_f32    s_regs(_s_bf16_cvt, 0), v_regs(v_src, 2*i_idx), v_regs(v_src, 2*i_idx) // check Nan
+           v_bfe_u32      v_regs(_v_bf16_cvt, 0), v_regs(v_src, 2*i_idx), 16, 1 // Non-Nan case: store lsb of bf16
+           v_add3_u32     v_regs(_v_bf16_cvt, 0), v_regs(v_src, 2*i_idx), v_regs(_v_bf16_cvt, 0), v_regs(_v_bf16_cvt, 3) // Non-Nan case: add lsb and the increment for rounding
+           v_cndmask_b32  v_regs(_v_tmp, 0),      v_regs(_v_bf16_cvt, 0), v_regs(_v_bf16_cvt, 2), s_regs(_s_bf16_cvt, 0)
+           v_lshrrev_b32  v_regs(_v_tmp, 0),      16,                     v_regs(_v_tmp, 0) // convert C to bf16
+
+           v_cmp_u_f32    s_regs(_s_bf16_cvt, 0), v_regs(v_src, 2*i_idx+1), v_regs(v_src, 2*i_idx+1) // check Nan
+           v_bfe_u32      v_regs(_v_bf16_cvt, 0), v_regs(v_src, 2*i_idx+1), 16, 1 // Non-Nan case: store lsb of bf16
+           v_add3_u32     v_regs(_v_bf16_cvt, 0), v_regs(v_src, 2*i_idx+1), v_regs(_v_bf16_cvt, 0), v_regs(_v_bf16_cvt, 3) // Non-Nan case: add lsb and the increment for rounding
+           v_cndmask_b32  v_regs(_v_tmp, 1),      v_regs(_v_bf16_cvt, 0),   v_regs(_v_bf16_cvt, 2), s_regs(_s_bf16_cvt, 0)
+           v_and_or_b32   v_regs(v_dst, i_idx),   v_regs(_v_tmp, 1),        v_regs(_v_bf16_cvt, 1), v_regs(_v_tmp, 0)    // pack two bf16 to dword
+
+           //v_lshrrev_b32         v_regs(_v_tmp, 0),     16,   v_regs(v_src, 2*i_idx)
+           //v_and_or_b32          v_regs(v_dst, i_idx),  v_regs(v_src, 2*i_idx+1), v_regs(_v_bf16_cvt, 0),   v_regs(_v_tmp, 0)
+           //v_cvt_pkrtz_f16_f32   v_regs(v_dst, i_idx),      v_regs(v_src, 2*i_idx),    v_regs(v_src, 2*i_idx+1)
        end
     end
 end
@@ -1405,7 +1424,23 @@ function dKV_32x128_scale_cvt(v_dst, v_src, s, n, is_scale)
               v_mul_f32           v_regs(v_dst, 2*i_idx),    s_scalar,                  v_regs(v_dst, 2*i_idx)
               v_mul_f32           v_regs(v_dst, 2*i_idx+1),  s_scalar,                  v_regs(v_dst, 2*i_idx+1)
            end
-           v_cvt_pkrtz_f16_f32 v_regs(v_dst, i_idx),      v_regs(v_dst, 2*i_idx),    v_regs(v_dst, 2*i_idx+1)
+
+           v_cmp_u_f32    s_regs(_s_bf16_cvt, 0), v_regs(v_dst, 2*i_idx), v_regs(v_dst, 2*i_idx) // check Nan
+           v_bfe_u32      v_regs(_v_bf16_cvt, 0), v_regs(v_dst, 2*i_idx), 16, 1 // Non-Nan case: store lsb of bf16
+           v_add3_u32     v_regs(_v_bf16_cvt, 0), v_regs(v_dst, 2*i_idx), v_regs(_v_bf16_cvt, 0), v_regs(_v_bf16_cvt, 3) // Non-Nan case: add lsb and the increment for rounding
+           v_cndmask_b32  v_regs(_v_tmp, 0),      v_regs(_v_bf16_cvt, 0), v_regs(_v_bf16_cvt, 2), s_regs(_s_bf16_cvt, 0)
+           v_lshrrev_b32  v_regs(_v_tmp, 0),      16,                     v_regs(_v_tmp, 0) // convert C to bf16
+
+           v_cmp_u_f32    s_regs(_s_bf16_cvt, 0), v_regs(v_dst, 2*i_idx+1), v_regs(v_dst, 2*i_idx+1) // check Nan
+           v_bfe_u32      v_regs(_v_bf16_cvt, 0), v_regs(v_dst, 2*i_idx+1), 16, 1 // Non-Nan case: store lsb of bf16
+           v_add3_u32     v_regs(_v_bf16_cvt, 0), v_regs(v_dst, 2*i_idx+1), v_regs(_v_bf16_cvt, 0), v_regs(_v_bf16_cvt, 3) // Non-Nan case: add lsb and the increment for rounding
+           v_cndmask_b32  v_regs(_v_tmp, 1),      v_regs(_v_bf16_cvt, 0),   v_regs(_v_bf16_cvt, 2), s_regs(_s_bf16_cvt, 0)
+           v_and_or_b32   v_regs(v_dst, i_idx),   v_regs(_v_tmp, 1),        v_regs(_v_bf16_cvt, 1), v_regs(_v_tmp, 0) // pack two bf16 to dword
+
+           //v_lshrrev_b32         v_regs(_v_tmp, 0),     16,   v_regs(v_dst, 2*i_idx)
+           //v_and_or_b32          v_regs(v_dst, i_idx),  v_regs(v_dst, 2*i_idx+1), v_regs(_v_bf16_cvt, 0),   v_regs(_v_tmp, 0)
+
+           //v_cvt_pkrtz_f16_f32 v_regs(v_dst, i_idx),      v_regs(v_dst, 2*i_idx),    v_regs(v_dst, 2*i_idx+1)
        end
     end
 end
@@ -1658,9 +1693,9 @@ function cl_gemm0(cl_p, pi)
  
    for var i = 0; i < 128/8; i++
       if i == 0
-         v_mfma_f32_32x32x8_f16  v_regs(_v_SPdSt, 0), acc_regs(_v_QtQ, i*vs_AB), acc_regs(_v_K, i*vs_AB), 0
+         v_mfma_f32_32x32x8_bf16  v_regs(_v_SPdSt, 0), acc_regs(_v_QtQ, i*vs_AB), acc_regs(_v_K, i*vs_AB), 0
       else
-         v_mfma_f32_32x32x8_f16  v_regs(_v_SPdSt, 0), acc_regs(_v_QtQ, i*vs_AB), acc_regs(_v_K, i*vs_AB), v_regs(_v_SPdSt, 0)
+         v_mfma_f32_32x32x8_bf16  v_regs(_v_SPdSt, 0), acc_regs(_v_QtQ, i*vs_AB), acc_regs(_v_K, i*vs_AB), v_regs(_v_SPdSt, 0)
       end
 
       //if (XDL_idx == 0)
@@ -1793,9 +1828,9 @@ function cl_gemm1(cl_p, pi)
 
    for var i = 0; i < 16; i++
       if i == 0
-         v_mfma_f32_32x32x8_f16  v_regs(_v_dPdS, 0), v_regs(_v_dO, i*vs_AB), acc_regs(_v_V, i*vs_AB), 0
+         v_mfma_f32_32x32x8_bf16  v_regs(_v_dPdS, 0), v_regs(_v_dO, i*vs_AB), acc_regs(_v_V, i*vs_AB), 0
       else
-         v_mfma_f32_32x32x8_f16  v_regs(_v_dPdS, 0), v_regs(_v_dO, i*vs_AB), acc_regs(_v_V, i*vs_AB), v_regs(_v_dPdS, 0)
+         v_mfma_f32_32x32x8_bf16  v_regs(_v_dPdS, 0), v_regs(_v_dO, i*vs_AB), acc_regs(_v_V, i*vs_AB), v_regs(_v_dPdS, 0)
       end
 
       if (XDL_idx < 6) 
@@ -1886,7 +1921,7 @@ function cl_gemm2(cl_p, pi)
 
    for var j = 0; j < 128/32; j++ 
       for var i = 0; i < 32/8; i++ 
-          v_mfma_f32_32x32x8_f16  acc_regs(_v_dV, j*vs_CD), v_regs(_v_dOt, j*8 + i*vs_AB), v_regs(_v_mP, i*vs_AB), acc_regs(_v_dV, j*vs_CD)
+          v_mfma_f32_32x32x8_bf16  acc_regs(_v_dV, j*vs_CD), v_regs(_v_dOt, j*8 + i*vs_AB), v_regs(_v_mP, i*vs_AB), acc_regs(_v_dV, j*vs_CD)
  
           if (XDL_idx <= 3)
              if (cl_p ^ (XDL_idx&1))
@@ -1969,7 +2004,7 @@ function cl_gemm3(cl_p, pi)
 
    for var j = 0; j < 128/32; j++ 
       for var i = 0; i < 32/8; i++ 
-          v_mfma_f32_32x32x8_f16  acc_regs(_v_dK, j*vs_CD), acc_regs(_v_QtQ, j*8 + i*vs_AB), v_regs(_v_dPdS, i*vs_AB), acc_regs(_v_dK, j*vs_CD)
+          v_mfma_f32_32x32x8_bf16  acc_regs(_v_dK, j*vs_CD), acc_regs(_v_QtQ, j*8 + i*vs_AB), v_regs(_v_dPdS, i*vs_AB), acc_regs(_v_dK, j*vs_CD)
          
           if (XDL_idx <= 3)  
              if (cl_p ^ (XDL_idx&1))
@@ -2052,9 +2087,9 @@ function cl_gemm4(cl_p, pi)
 
    for var i = 0; i < 128/8; i++ 
        if (i==0)
-          v_mfma_f32_32x32x8_f16  v_regs(_v_dQ, 0), v_regs(_v_SPdSt, i*vs_AB), acc_regs(_v_Kt, i*vs_AB), 0
+          v_mfma_f32_32x32x8_bf16  v_regs(_v_dQ, 0), v_regs(_v_SPdSt, i*vs_AB), acc_regs(_v_Kt, i*vs_AB), 0
        else
-          v_mfma_f32_32x32x8_f16  v_regs(_v_dQ, 0), v_regs(_v_SPdSt, i*vs_AB), acc_regs(_v_Kt, i*vs_AB), v_regs(_v_dQ, 0)
+          v_mfma_f32_32x32x8_bf16  v_regs(_v_dQ, 0), v_regs(_v_SPdSt, i*vs_AB), acc_regs(_v_Kt, i*vs_AB), v_regs(_v_dQ, 0)
        end
         
        if (XDL_idx < 8)  
@@ -2343,6 +2378,9 @@ shader main
 
   v_cndmask_b32         v_regs(_v_dS_perm, 0),   v_regs(_v_tmp, 0),    v_regs(_v_tmp, 2),         vcc
  
+  v_mov_b32             v_regs(_v_bf16_cvt, 1), 0xffff0000
+  v_mov_b32             v_regs(_v_bf16_cvt, 2), 0x7fff0000
+  v_mov_b32             v_regs(_v_bf16_cvt, 3), 0x7fff
 
   //ask wave0 and 1 load L, wave2and3 load D
   s_cmp_lt_u32   s_wave_id, 2

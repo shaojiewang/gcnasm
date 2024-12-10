@@ -215,7 +215,11 @@ int main(int argc, char **argv)
     int d = 128;
     int atm_f32 = 1;
     int skip_dq_rd = 1;
-    
+    int mask = 0;
+    int mask_kb = 1;
+    int ioperm = 1; //0: bshd, 1:bhsd -----lse,D,dQ always keep in bhsd layout
+    int qa_rt = 1; //mqa/gqa ratio
+
     int ts_qo = 32;
     int ts_kv = 128;
     int dump_result = 0;
@@ -231,6 +235,11 @@ int main(int argc, char **argv)
     get_param(parsedOptions, "d", d);
     get_param(parsedOptions, "dump_result", dump_result);
     get_param(parsedOptions, "atm_f32", atm_f32);
+    get_param(parsedOptions, "mask", mask);
+    get_param(parsedOptions, "mask_kb", mask_kb);
+    get_param(parsedOptions, "ioperm", ioperm);
+    get_param(parsedOptions, "subk", ts_kv);
+    get_param(parsedOptions, "qa_rt", qa_rt);
 
     std::cout << "b:" << b << std::endl;
     std::cout << "h:" << h << std::endl;
@@ -239,10 +248,34 @@ int main(int argc, char **argv)
     std::cout << "dump_result:" << dump_result << std::endl;
     std::cout << "atm_f32:" << atm_f32 << std::endl;
     std::cout << "skip_dq_rd:" << skip_dq_rd << std::endl;
+    std::cout << "mask:" << mask << std::endl;
+    std::cout << "mask_kb:" << mask_kb << std::endl;
+    std::cout << "ioperm:" << ioperm << std::endl;
+    std::cout << "subk:" << ts_kv << std::endl;
+    std::cout << "qa_rt:" << qa_rt << std::endl;
 
     int stride_tg = ts_kv * d * 2;
     int stride_head = s * d * 2;
     int stride_batch = h * s * d * 2;
+    int stride_seqlen = d * 2;
+
+    int stride_head_kv = s * d * 2;
+    int stride_batch_kv = (h/qa_rt) * s * d * 2;
+    int stride_seqlen_kv = d * 2;
+    int stride_seqlen_dkv = d * 2;
+
+    if (ioperm == 0)//bshd
+    {
+        stride_seqlen = h * d * 2;
+        stride_head = d * 2;
+        stride_batch = h * s * d * 2;
+
+        stride_seqlen_kv = (h/qa_rt) * d * 2;
+        stride_seqlen_dkv = h * d * 2;
+        stride_tg = ts_kv * stride_seqlen_kv;
+        stride_head_kv = d * 2;
+        stride_batch_kv = (h/qa_rt) * s * d * 2;
+    }
 
     // int lda = m*sizeof(float);
     // int ldb = n*sizeof(float);
@@ -258,8 +291,8 @@ int main(int argc, char **argv)
 
     long sz_mx = b * h * s * d;
     int sz_lsd = b * h * s;
-    int sz_mx_pad = ts_qo * 4 * d;
-    int sz_lsd_pad = ts_qo * 4;
+    int sz_mx_pad = 0;//ts_qo * 4 * d;
+    int sz_lsd_pad = 0;//ts_qo * 4;
     long sz_mx_dq = 0;
 
     if (atm_f32 == 2)
@@ -388,11 +421,35 @@ int main(int argc, char **argv)
     // fp16 cpy to device
     // HIP_CALL(hipMemcpy(dev_a, fp16_a, lda*(k>>1), hipMemcpyHostToDevice));
     // HIP_CALL(hipMemcpy(dev_b, fp16_b, ldb*(k>>1), hipMemcpyHostToDevice));
+    if (ioperm == 1)
+    {
+        HIP_CALL(hipMemcpy(dev_q, host_fp16_q, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
+        HIP_CALL(hipMemcpy(dev_k, host_fp16_k, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
+        HIP_CALL(hipMemcpy(dev_v, host_fp16_v, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
+        HIP_CALL(hipMemcpy(dev_do, host_fp16_do, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
+    }
+    else 
+    {
+        float16 *host_fp16_perm_q = (float16 *)malloc(sz_mx * sizeof(float) / 2);
+        float16 *host_fp16_perm_k = (float16 *)malloc(sz_mx * sizeof(float) / 2);
+        float16 *host_fp16_perm_v = (float16 *)malloc(sz_mx * sizeof(float) / 2);
+        float16 *host_fp16_perm_do = (float16 *)malloc(sz_mx * sizeof(float) / 2);
 
-    HIP_CALL(hipMemcpy(dev_q, host_fp16_q, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-    HIP_CALL(hipMemcpy(dev_k, host_fp16_k, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-    HIP_CALL(hipMemcpy(dev_v, host_fp16_v, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-    HIP_CALL(hipMemcpy(dev_do, host_fp16_do, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
+        fmha_batch_reshape(host_fp16_perm_q,  host_fp16_q,  b, h, s, d, FP16, 1, ioperm);
+        fmha_batch_reshape(host_fp16_perm_k,  host_fp16_k,  b, h, s, d, FP16, 1, ioperm, qa_rt);
+        fmha_batch_reshape(host_fp16_perm_v,  host_fp16_v,  b, h, s, d, FP16, 1, ioperm, qa_rt);
+        fmha_batch_reshape(host_fp16_perm_do,  host_fp16_do,  b, h, s, d, FP16, 1, ioperm);
+
+        HIP_CALL(hipMemcpy(dev_q, host_fp16_perm_q, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
+        HIP_CALL(hipMemcpy(dev_k, host_fp16_perm_k, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
+        HIP_CALL(hipMemcpy(dev_v, host_fp16_perm_v, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
+        HIP_CALL(hipMemcpy(dev_do, host_fp16_perm_do, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
+
+        free(host_fp16_perm_q);
+        free(host_fp16_perm_k);
+        free(host_fp16_perm_v);
+        free(host_fp16_perm_do);
+    }
     HIP_CALL(hipMemcpy(dev_dq, host_fp32_dq, sz_mx * sizeof(float), hipMemcpyHostToDevice));
 
     HIP_CALL(hipMemcpy(dev_lse, host_lse, sz_lsd * sizeof(float), hipMemcpyHostToDevice));
@@ -448,6 +505,18 @@ int main(int argc, char **argv)
         p3 _p13;
         unsigned int BAs;
         p3 _p14;
+        unsigned int Seqs;
+        p3 _p15;
+        unsigned int ratio;
+        p3 _p16;
+        unsigned int Hs_kv;
+        p3 _p17;
+        unsigned int BAs_kv;
+        p3 _p18;
+        unsigned int Seqs_kv;
+        p3 _p19;
+        unsigned int Seqs_dkv;
+        p3 _p20;
 #ifdef ASM_PRINT
         void *print;
 #endif
@@ -478,6 +547,12 @@ int main(int argc, char **argv)
     args.Ts = stride_tg;
     args.Hs = stride_head;
     args.BAs = stride_batch;
+    args.Seqs = stride_seqlen;
+    args.ratio = qa_rt;
+    args.Hs_kv = stride_head_kv;
+    args.BAs_kv = stride_batch_kv;
+    args.Seqs_kv = stride_seqlen_kv;
+    args.Seqs_dkv = stride_seqlen_dkv;
 #ifdef ASM_PRINT
     args.print = (void *)print;
 #endif
@@ -487,14 +562,20 @@ int main(int argc, char **argv)
     void *config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER, &args, HIP_LAUNCH_PARAM_BUFFER_SIZE,
                       &arg_size, HIP_LAUNCH_PARAM_END};
 
-    int total_loop = 1;
-    int warm_ups = 1;
+    int total_loop = 8;
+    int warm_ups = 0;
     int i;
 
     int bdx = 256;
-    int gdx = s / ts_kv;
+    int gdx = (s+ts_kv-1) / ts_kv;
     int gdy = h;
     int gdz = b;
+
+    if (mask && mask_kb)
+    {
+        int num_tg = (s+ts_kv-1) / ts_kv;
+        gdx = (num_tg%2) ? (num_tg/2+1) : (num_tg/2);
+    }
 
     for (i = 0; i < warm_ups; i++)
     {
@@ -514,24 +595,26 @@ int main(int argc, char **argv)
     }
 #endif
 
-    hipEventCreate(&evt_00);
-    hipEventCreate(&evt_11);
-    hipDeviceSynchronize();
-    hipEventRecord(evt_00, NULL);
+    HIP_CALL(hipEventCreate(&evt_00));
+    HIP_CALL(hipEventCreate(&evt_11));
+    HIP_CALL(hipDeviceSynchronize());
+    HIP_CALL(hipEventRecord(evt_00, NULL));
     for (i = 0; i < total_loop; i++)
         HIP_CALL(hipModuleLaunchKernel(kernel_func, gdx, gdy, gdz, bdx, 1, 1, 0, 0, NULL, (void **)&config));
 
     std::cout << "we are done" << std::endl;
     float elapsed_ms;
-    hipEventRecord(evt_11, NULL);
-    hipEventSynchronize(evt_11);
-    hipDeviceSynchronize();
-    hipEventElapsedTime(&elapsed_ms, evt_00, evt_11);
-    hipEventDestroy(evt_00);
-    hipEventDestroy(evt_11);
+    HIP_CALL(hipEventRecord(evt_11, NULL));
+    HIP_CALL(hipEventSynchronize(evt_11));
+    HIP_CALL(hipDeviceSynchronize());
+    HIP_CALL(hipEventElapsedTime(&elapsed_ms, evt_00, evt_11));
+    HIP_CALL(hipEventDestroy(evt_00));
+    HIP_CALL(hipEventDestroy(evt_11));
 
     float time_per_loop = elapsed_ms / total_loop;
     float gflops = (float)2 * 5 * b * h * d * s * s / time_per_loop / (1e6);
+    if(mask)
+       gflops = gflops/2;
     printf("b:%d,h:%d,s:%d,d:%d, time: %.3f, gflops:%.3f\n", b, h, s, d, time_per_loop, gflops);
     // if(validate){
     //     hgemm_cr_kpack2(host_c, host_a, host_b, alpha, m,n,k,lda/sizeof(float),ldb/sizeof(float),ldc/sizeof(float));
@@ -544,10 +627,36 @@ int main(int argc, char **argv)
     if ((atm_f32 == 1) || ((!skip_dq_rd)&&(atm_f32 == 2)))
        HIP_CALL(hipMemcpy(host_fp32_dq, dev_dq, sz_mx_dq * sizeof(float), hipMemcpyDeviceToHost));
     else
-       HIP_CALL(hipMemcpy((void*)host_fp16_dq, dev_dq, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));;
-    HIP_CALL(hipMemcpy(host_fp16_dk, dev_dk, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
-    HIP_CALL(hipMemcpy(host_fp16_dv, dev_dv, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
+    {
+       if (ioperm == 1)
+            HIP_CALL(hipMemcpy((void*)host_fp16_dq, dev_dq, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
+       else
+       {
+            float16 *host_fp16_perm_dq = (float16 *)malloc(sz_mx * sizeof(float) / 2);
+            HIP_CALL(hipMemcpy(host_fp16_perm_dq, dev_dq, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
+            fmha_batch_reshape(host_fp16_dq, host_fp16_perm_dq, b, h, s, d, FP16, ioperm, 1);
+            free(host_fp16_perm_dq);    
+       } 
+    }
+    if (ioperm == 1)
+    {
+       HIP_CALL(hipMemcpy(host_fp16_dk, dev_dk, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
+       HIP_CALL(hipMemcpy(host_fp16_dv, dev_dv, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
+    }
+    else 
+    {
+        float16 *host_fp16_perm_dk = (float16 *)malloc(sz_mx * sizeof(float) / 2);
+        float16 *host_fp16_perm_dv = (float16 *)malloc(sz_mx * sizeof(float) / 2);
 
+        HIP_CALL(hipMemcpy(host_fp16_perm_dk, dev_dk, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
+        HIP_CALL(hipMemcpy(host_fp16_perm_dv, dev_dv, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
+
+        fmha_batch_reshape(host_fp16_dk, host_fp16_perm_dk, b, h, s, d, FP16, ioperm, 1);
+        fmha_batch_reshape(host_fp16_dv, host_fp16_perm_dv, b, h, s, d, FP16, ioperm, 1);
+
+        free(host_fp16_perm_dk);
+        free(host_fp16_perm_dv);
+    }
     if (atm_f32 == 1)
        fmha_batch_cvt(host_fp16_dq, host_fp32_dq, b, h, s, d, FP16);
     else if ((atm_f32 == 2)&&(!skip_dq_rd))
@@ -555,7 +664,6 @@ int main(int argc, char **argv)
         fmha_bwd_dQ_redc(host_fp32_dq, b, h, s, d, s/ts_kv);
         fmha_batch_cvt(host_fp16_dq, host_fp32_dq, b, h, s, d, FP16);
     }
-
 
     if (dump_result)
     { 
@@ -590,15 +698,15 @@ int main(int argc, char **argv)
     free(host_fp16_dk);
     free(host_fp16_dv);
 
-    hipFree(dev_q);
-    hipFree(dev_k);
-    hipFree(dev_v);
-    hipFree(dev_do);
-    hipFree(dev_dq);
-    hipFree(dev_dk);
-    hipFree(dev_dv);
-    hipFree(dev_lse);
-    hipFree(dev_odo);
+    HIP_CALL(hipFree(dev_q));
+    HIP_CALL(hipFree(dev_k));
+    HIP_CALL(hipFree(dev_v));
+    HIP_CALL(hipFree(dev_do));
+    HIP_CALL(hipFree(dev_dq));
+    HIP_CALL(hipFree(dev_dk));
+    HIP_CALL(hipFree(dev_dv));
+    HIP_CALL(hipFree(dev_lse));
+    HIP_CALL(hipFree(dev_odo));
 
 #ifdef ASM_PRINT
     free(host_print);
